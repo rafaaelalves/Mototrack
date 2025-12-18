@@ -1,27 +1,16 @@
-import {
-  deleteTransaction,
-  listTransactionsByMonth,
-  Transaction,
-} from "@/src/db/transactions";
+import { listTransactionsByMonth, Transaction } from "@/src/db/transactions";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import {
   CaretLeftIcon,
   CaretRightIcon,
+  ChartBarIcon,
   MinusCircleIcon,
   PlusCircleIcon,
   PlusIcon,
-  TrashSimpleIcon,
 } from "phosphor-react-native";
-import { useCallback, useEffect, useState } from "react";
-import {
-  Alert,
-  FlatList,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { useCallback, useState } from "react";
+import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import {
   SafeAreaView,
   useSafeAreaInsets,
@@ -32,10 +21,18 @@ function formatBRL(cents: number) {
 }
 
 function formatDay(iso: string) {
-  // Espera yyyy=mm-dd
+  // Espera yyyy-mm-dd
   const parts = iso.split("-");
   return parts[2] ?? iso;
 }
+
+// label de hora usando createdAt.
+// function formatTimeFromCreatedAt(ms: number) {
+//   return new Date(ms).toLocaleTimeString("pt-BR", {
+//     hour: "2-digit",
+//     minute: "2-digit",
+//   });
+// }
 
 export default function Index() {
   const router = useRouter();
@@ -43,6 +40,8 @@ export default function Index() {
   const insets = useSafeAreaInsets();
 
   const db = useSQLiteContext();
+
+  const Separator = () => <View style={styles.separator} />;
 
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const incomeCents = transactions.reduce(
@@ -83,10 +82,6 @@ export default function Index() {
     }, [load])
   );
 
-  useEffect(() => {
-    load();
-  }, [load]);
-
   function handleMonthChange(delta: number) {
     let newMonth = selectedMonth + delta;
     let newYear = selectedYear;
@@ -111,10 +106,31 @@ export default function Index() {
             onPress={() => handleMonthChange(-1)}
             style={styles.monthButton}
           >
-            <CaretLeftIcon weight="duotone" />
+            <CaretLeftIcon weight="duotone" color="rgba(255,255,255,0.70)" />
           </Pressable>
 
-          <Text style={styles.monthTitle}>{monthLabel}</Text>
+          <Pressable
+            onPress={() =>
+              router.push({
+                pathname: "/stats",
+                params: {
+                  year: String(selectedYear),
+                  month: String(selectedMonth),
+                },
+              })
+            }
+            style={{ padding: 10 }}
+          >
+            <View style={styles.stats}>
+              <ChartBarIcon
+                size={20}
+                weight="duotone"
+                color="rgba(255,255,255,0.70)"
+              />
+
+              <Text style={styles.monthTitle}>{monthLabel}</Text>
+            </View>
+          </Pressable>
 
           <Pressable
             onPress={() => handleMonthChange(1)}
@@ -123,10 +139,12 @@ export default function Index() {
           >
             <CaretRightIcon
               weight="duotone"
+              color="rgba(255,255,255,0.70)"
               style={isCurrentMonth ? { opacity: 0.3 } : undefined}
             />
           </Pressable>
         </View>
+
         <Text style={styles.summaryTitle}>Resumo do mês</Text>
 
         <View style={styles.summaryRow}>
@@ -162,7 +180,7 @@ export default function Index() {
           <Pressable
             onPress={() =>
               router.push({
-                pathname: "/newEntry",
+                pathname: "/transaction/[id]",
                 params: { id: String(item.id) },
               })
             }
@@ -173,60 +191,43 @@ export default function Index() {
               ) : (
                 <PlusCircleIcon size={24} weight="duotone" color="#28a745" />
               )}
-              <View style={{ flex: 1 }}>
-                <View
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: 10,
-                  }}
-                >
-                  <Text>{formatDay(item.dateISO)}</Text>
-                  <Text style={{ fontWeight: "600" }}>{item.title}</Text>
-                </View>
-                <Text>
-                  R$ {item.type === "income" ? "+" : "-"}{" "}
-                  {formatBRL(item.amountCents)}
-                </Text>
+
+              <View style={styles.dayCol}>
+                <Text style={styles.dayText}>Dia</Text>
+                <Text style={styles.dayNumber}>{formatDay(item.dateISO)}</Text>
               </View>
-              {item.notes ? (
-                <Text style={{ opacity: 0.7, marginTop: 2 }} numberOfLines={1}>
-                  {item.notes}
-                </Text>
-              ) : null}
-              <Pressable
-                style={{ padding: 8 }}
-                onPress={async () => {
-                  Alert.alert(
-                    "Excluir lançamento?",
-                    "Essa ação não pode ser desfeita.",
-                    [
-                      { text: "Cancelar", style: "cancel" },
-                      {
-                        text: "Excluir",
-                        style: "destructive",
-                        onPress: async () => {
-                          await deleteTransaction(db, item.id);
-                          load();
-                        },
-                      },
-                    ]
-                  );
-                }}
-              >
-                <TrashSimpleIcon
-                  size={25}
-                  weight="duotone"
-                  color="#ff3b30"
-                  style={{ opacity: 0.7 }}
-                />
-              </Pressable>
+
+              <View style={styles.transactionContent}>
+                <View style={styles.transactionHeader}>
+                  <Text style={styles.titleText} numberOfLines={1}>
+                    {item.title}
+                  </Text>
+
+                  <Text
+                    style={[
+                      styles.amountText,
+                      item.type === "income"
+                        ? styles.ammountIncome
+                        : styles.amountExpense,
+                    ]}
+                  >
+                    {item.type === "income" ? "+" : "-"}
+                    R$ {formatBRL(item.amountCents)}
+                  </Text>
+                </View>
+              </View>
             </View>
           </Pressable>
         )}
         ListEmptyComponent={
-          <Text style={{ padding: 20 }}>Sem lançamentos ainda</Text>
+          <View style={styles.emptyContainer}>
+            <Text style={styles.emptyTitle}>Sem lançamentos neste mês</Text>
+            <Text style={styles.emptySubtitle}>
+              Toque no botão + para registrar a sua primeira entrada ou saída.
+            </Text>
+          </View>
         }
+        ItemSeparatorComponent={Separator}
       />
       <Pressable
         style={[styles.add, { bottom: 30 + insets.bottom }]}
@@ -259,11 +260,13 @@ export const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "bold",
     textTransform: "capitalize",
+    color: "rgba(255,255,255,0.70)",
   },
   summaryTitle: {
     fontSize: 18,
     fontWeight: "bold",
     marginBottom: 8,
+    color: "rgba(255,255,255,0.70)",
   },
   summaryRow: {
     flexDirection: "row",
@@ -272,8 +275,9 @@ export const styles = StyleSheet.create({
   },
   summaryCard: {
     flex: 1,
+    backgroundColor: "rgba(255,255,255,0.06)",
     borderWidth: 1,
-    borderColor: "#eee",
+    borderColor: "rgba(255,255,255,0.10)",
     borderRadius: 10,
     padding: 12,
   },
@@ -281,19 +285,19 @@ export const styles = StyleSheet.create({
     fontSize: 12,
     opacity: 0.7,
     marginBottom: 6,
+    color: "rgba(255,255,255,0.70)",
   },
   summaryNumber: {
     fontSize: 16,
     fontWeight: "600",
+    color: "rgba(255,255,255,0.70)",
   },
   transactionList: {
     paddingBottom: 20,
   },
   transactionItemList: {
     padding: 15,
-    borderWidth: 1,
-    borderColor: "#ddd",
-    backgroundColor: "#eee",
+    backgroundColor: "rgba(255,255,255,0.06)",
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
@@ -302,7 +306,7 @@ export const styles = StyleSheet.create({
     position: "absolute",
     bottom: 30,
     right: 30,
-    backgroundColor: "#007bff",
+    backgroundColor: "rgba(255,255,255,0.15)",
     width: 60,
     height: 60,
     borderRadius: 30,
@@ -311,5 +315,75 @@ export const styles = StyleSheet.create({
     elevation: 4, //Android
     shadowOpacity: 0.2, //IOS
     shadowOffset: { width: 0, height: 3 }, //IOS
+  },
+  stats: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  dayCol: {
+    width: 42,
+    alignItems: "center",
+  },
+  dayText: {
+    color: "rgba(255,255,255,0.65)",
+    fontSize: 12,
+  },
+  dayNumber: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "rgba(255,255,255,0.95)",
+  },
+  rightCol: {
+    alignItems: "flex-end",
+    justifyContent: "center",
+    gap: 6,
+    marginLeft: 10,
+  },
+  transactionContent: {
+    flex: 1,
+  },
+  transactionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  titleText: {
+    flex: 1,
+    color: "rgba(255,255,255,0.95)",
+    fontWeight: "700",
+  },
+  amountText: {
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  ammountIncome: {
+    color: "#28a745",
+  },
+  amountExpense: {
+    color: "#ff3b30",
+  },
+  emptyContainer: {
+    paddingHorizontal: 24,
+    paddingVertical: 32,
+    alignItems: "center",
+  },
+  emptyTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "rgba(255,255,255,0.90)",
+    marginBottom: 6,
+  },
+  emptySubtitle: {
+    fontSize: 13,
+    textAlign: "center",
+    color: "rgba(255,255,255,0.65)",
+  },
+  separator: {
+    height: 1,
+    backgroundColor: "rgba(255,255,255,0.30)",
+    marginLeft: 25,
+    marginRight: 25,
+    opacity: 0.7,
   },
 });

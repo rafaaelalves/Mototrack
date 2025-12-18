@@ -1,50 +1,109 @@
-# Welcome to your Expo app 👋
+# Mototrack – Controle financeiro para motoboys 🏍💸
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+App mobile feito com **React Native + Expo** para acompanhar ganhos, gastos e quilometragem de forma simples, visual e offline.  
+Pensado para **motoboys e entregadores**, mas útil para qualquer controle financeiro mensal.
 
-## Get started
+---
 
-1. Install dependencies
+## ✨ Funcionalidades
 
-   ```bash
-   npm install
-   ```
+### 💰 Financeiro mensal
 
-2. Start the app
+- Resumo do mês: **Entradas, Saídas e Saldo**.
+- Navegação por meses (anterior/próximo), sem avançar para meses futuros.
+- Lançamentos de **entrada** e **saída** com:
+  - valor em reais (armazenado em centavos),
+  - título,
+  - data,
+  - notas opcionais,
+  - edição e exclusão.
 
-   ```bash
-   npx expo start
-   ```
+### 🏷 Categorias & KM
 
-In the output, you'll find options to open the app in a
+- Despesas categorizadas em:
+  - **Combustível**, **Alimentação**, **Manutenção**, **Outros** (ou sem categoria).
+- Campo opcional de **KM rodados** em lançamentos de **entrada**.
+- Quilometragem armazenada em metros (`distanceMeters`) para facilitar cálculos.
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+### 📊 Estatísticas do mês
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+- Total de **Entradas**, **Saídas** e **Saldo**.
+- **KM no mês** (soma de todos os distanceMeters).
+- **Custo por km** (R$/km com base nos gastos).
+- **R$/km (saldo)** – quanto sobra por km rodado.
+- Tela em formato de **bottom sheet** com:
+  - cards em grid,
+  - pager horizontal (2 páginas: visão geral e por categoria),
+  - indicador de página (dots).
 
-## Get a fresh project
+### 🔎 Detalhe da transação
 
-When you're ready, run:
+- Tela dedicada para ver melhor cada lançamento:
+  - data, tipo, valor, categoria, KM e notas.
+- Atalhos para **editar** ou **excluir** o lançamento.
 
-```bash
-npm run reset-project
+### 🎨 UI / UX
+
+- Tema escuro com:
+  - background roxo + **glow elíptico** em laranja usando `react-native-svg`,
+  - cards translúcidos com bordas suaves.
+- Ícones **Phosphor** em estilo _duotone_.
+- Tipografia **Nunito** via `@expo-google-fonts/nunito`.
+- Modais (`newEntry`, `stats`, detalhe da transação) com:
+  - fundo escurecido,
+  - animação de subida a partir da parte inferior da tela.
+
+---
+
+## 🧱 Stack técnica
+
+- **React Native** (Expo)
+- **Expo Router**
+- **SQLite** com `expo-sqlite`
+- **react-native-svg** + `expo-linear-gradient`
+- **@expo-google-fonts/nunito**
+- **phosphor-react-native**
+- **react-native-safe-area-context**
+- **react-native-keyboard-aware-scroll-view**
+- **@react-native-community/datetimepicker**
+
+---
+
+## 🗄 Modelagem do banco
+
+Tabela: `transactions`
+
+```sql
+CREATE TABLE IF NOT EXISTS transactions (
+  id INTEGER PRIMARY KEY NOT NULL,
+  dateISO TEXT NOT NULL,       -- "YYYY-MM-DD"
+  type TEXT NOT NULL,          -- 'income' | 'expense'
+  amountCents INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  createdAt INTEGER NOT NULL,
+  notes TEXT,
+  category TEXT,
+  distanceMeters INTEGER       -- metros rodados (opcional)
+);
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+Migrations controladas via PRAGMA user_version no initDB, evitando quebrar dados antigos.
 
-## Learn more
+## ▶️ Como rodar
 
-To learn more about developing your project with Expo, look at the following resources:
+```
+git clone https://github.com/seu-usuario/mototrack.git
+cd mototrack
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+# instalar dependências
+npm install
+# ou
+yarn
 
-## Join the community
+# iniciar o projeto
+npx expo start
+# ou
+yarn expo start
+```
 
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+Depois é só abrir no Expo Go (dispositivo físico) ou emulador.
