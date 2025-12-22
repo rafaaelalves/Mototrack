@@ -1,4 +1,5 @@
 import { listTransactionsByMonth, Transaction } from "@/src/db/transactions";
+import { exportBackup, importBackupFromFile } from "@/src/services/backupFile";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import {
@@ -109,28 +110,15 @@ export default function Index() {
             <CaretLeftIcon weight="duotone" color="rgba(255,255,255,0.70)" />
           </Pressable>
 
-          <Pressable
-            onPress={() =>
-              router.push({
-                pathname: "/stats",
-                params: {
-                  year: String(selectedYear),
-                  month: String(selectedMonth),
-                },
-              })
-            }
-            style={{ padding: 10 }}
-          >
-            <View style={styles.stats}>
-              <ChartBarIcon
-                size={20}
-                weight="duotone"
-                color="rgba(255,255,255,0.70)"
-              />
+          <View style={styles.stats}>
+            {/* <ChartBarIcon
+              size={20}
+              weight="duotone"
+              color="rgba(255,255,255,0.70)"
+            /> */}
 
-              <Text style={styles.monthTitle}>{monthLabel}</Text>
-            </View>
-          </Pressable>
+            <Text style={styles.monthTitle}>{monthLabel}</Text>
+          </View>
 
           <Pressable
             onPress={() => handleMonthChange(1)}
@@ -166,6 +154,65 @@ export default function Index() {
             <Text style={styles.summaryLabel}>Saldo</Text>
             <Text style={styles.summaryNumber}>R$ {formatBRL(totalCents)}</Text>
           </View>
+        </View>
+        <Pressable
+          style={styles.statsButton}
+          onPress={() =>
+            router.push({
+              pathname: "/stats",
+              params: {
+                year: String(selectedYear),
+                month: String(selectedMonth),
+              },
+            })
+          }
+        >
+          <ChartBarIcon
+            size={18}
+            weight="duotone"
+            color="rgba(255,255,255,0.90)"
+          />
+          <Text style={styles.statsButtonText}>
+            Ver estatísticas detalhadas
+          </Text>
+        </Pressable>
+        {/* <Text style={styles.statsHint}>
+          Compare com o mês anterior e veja projeções até o fim do mês.
+        </Text> */}
+        <View style={{ flexDirection: "row", gap: 10, marginTop: 16 }}>
+          <Pressable
+            style={{
+              flex: 1,
+              paddingVertical: 10,
+              borderRadius: 8,
+              borderWidth: 1,
+              borderColor: "rgba(255,255,255,0.14)",
+              backgroundColor: "rgba(255,255,255,0.06)",
+              alignItems: "center",
+            }}
+            onPress={() => exportBackup(db)}
+          >
+            <Text style={{ color: "rgba(255,255,255,0.90)" }}>
+              Exportar backup
+            </Text>
+          </Pressable>
+
+          <Pressable
+            style={{
+              flex: 1,
+              paddingVertical: 10,
+              borderRadius: 8,
+              borderWidth: 1,
+              borderColor: "rgba(255,255,255,0.14)",
+              backgroundColor: "rgba(255,255,255,0.06)",
+              alignItems: "center",
+            }}
+            onPress={() => importBackupFromFile(db)}
+          >
+            <Text style={{ color: "rgba(255,255,255,0.90)" }}>
+              Importar backup
+            </Text>
+          </Pressable>
         </View>
       </View>
 
@@ -290,6 +337,29 @@ export const styles = StyleSheet.create({
   summaryNumber: {
     fontSize: 16,
     fontWeight: "600",
+    color: "rgba(255,255,255,0.70)",
+  },
+  statsButton: {
+    marginTop: 18,
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
+  },
+  statsButtonText: {
+    color: "rgba(255,255,255,0.95)",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  statsHint: {
+    marginTop: 6,
+    fontSize: 12,
     color: "rgba(255,255,255,0.70)",
   },
   transactionList: {

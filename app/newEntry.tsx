@@ -305,6 +305,9 @@ export default function NewEntry() {
             {type === "expense" && (
               <View style={styles.formGroup}>
                 <Text style={styles.label}>Categoria</Text>
+                <Text style={styles.helperText}>
+                  (Opcional) Ajuda nas estatísticas do mês.
+                </Text>
 
                 <View style={styles.chipsRow}>
                   {CATEGORIES.map((c) => {
@@ -327,10 +330,6 @@ export default function NewEntry() {
                     );
                   })}
                 </View>
-
-                <Text style={styles.helperText}>
-                  (Opcional) Ajuda nas estatísticas do mês.
-                </Text>
               </View>
             )}
             <View style={styles.formGroup}>
@@ -430,7 +429,7 @@ export const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 10,
-    marginTop: 8,
+    marginTop: 10,
   },
   chip: {
     borderWidth: 1,
@@ -452,8 +451,7 @@ export const styles = StyleSheet.create({
     fontWeight: "700",
   },
   helperText: {
-    marginTop: 6,
-    fontSize: 12,
+    fontSize: 11,
     opacity: 0.7,
     color: "rgba(255,255,255,0.70)",
   },
