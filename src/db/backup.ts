@@ -11,8 +11,8 @@ export type BackupFile = {
 export async function buildBackup(db: SQLiteDatabase): Promise<BackupFile> {
   const rows = await db.getAllAsync<Transaction>(
     `SELECT *
-     FROM transactions
-     ORDER BY dateISO DESC, createdAt DESC;`
+      FROM transactions
+      ORDER BY dateISO DESC, createdAt DESC;`
   );
 
   return {
@@ -61,7 +61,9 @@ export async function applyBackup(
         t.amountCents,
         t.title,
         t.createdAt,
-        t.updatedAt ?? t.createdAt,
+        // se vier de um backup antigo sem updatedAt,
+        // usa createdAt como fallback
+        (t as any).updatedAt ?? t.createdAt,
         t.deletedAt ?? null,
         t.notes ?? null,
         t.category ?? null,

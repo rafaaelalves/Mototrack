@@ -1,41 +1,46 @@
 import * as DocumentPicker from "expo-document-picker";
-import * as FileSystem from "expo-file-system";
+import { Directory, File, Paths } from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import type { SQLiteDatabase } from "expo-sqlite";
 import { Alert } from "react-native";
 import { applyBackup, buildBackup, type BackupFile } from "../db/backup";
+
+function backupFileName() {
+  // AAAA-MM-DD + HHmmss pra evitar colisão (2 backups no mesmo dia)
+  const d = new Date();
+  const date = d.toISOString().slice(0, 10);
+  const time = `${String(d.getHours()).padStart(2, "0")}${String(
+    d.getMinutes()
+  ).padStart(2, "0")}${String(d.getSeconds()).padStart(2, "0")}`;
+  return `mototrack-backup-${date}-${time}.json`;
+}
 
 export async function exportBackup(db: SQLiteDatabase) {
   try {
     const backup = await buildBackup(db);
     const json = JSON.stringify(backup, null, 2);
 
-    const date = new Date().toISOString().slice(0, 10);
-    const fileName = `mototrack-backup-${date}.json`;
+    // (opcional, mas organizado) /document/backups
+    const backupsDir = new Directory(Paths.document, "backups");
+    backupsDir.create({ intermediates: true, idempotent: true }); // cria a pasta se precisar :contentReference[oaicite:5]{index=5}
 
-    const fsAny = FileSystem as any;
-    const dir: string | null =
-      fsAny.cacheDirectory ?? fsAny.documentDirectory ?? null;
+    const fileName = backupFileName();
+    const file = new File(backupsDir, fileName);
 
-    if (!dir) {
-      Alert.alert(
-        "Erro",
-        "Não foi possível acessar o diretório de arquivos do app."
-      );
-      return;
-    }
-
-    const fileUri = dir + fileName;
+    // cria o arquivo e sobrescreve se existir (por segurança)
+    file.create({ intermediates: true, overwrite: true }); // :contentReference[oaicite:6]{index=6}
+    file.write(json); // escreve o conteúdo :contentReference[oaicite:7]{index=7}
 
     if (await Sharing.isAvailableAsync()) {
-      await Sharing.shareAsync(fileUri, {
+      await Sharing.shareAsync(file.uri, {
         mimeType: "application/json",
         dialogTitle: "Exportar backup do Mototrack",
+        // (se quiser caprichar no iOS depois, dá pra usar UTI também) :contentReference[oaicite:8]{index=8}
       });
     } else {
       Alert.alert(
         "Backup gerado",
-        `Arquivo criado em:\n${fileUri}\n\nUse um gerenciador de arquivos para enviar para a nuvem.`
+        `Arquivo criado em:\n${file.uri}\n\nDica: em geral o jeito mais confiável é usar o botão de compartilhar quando disponível.`
       );
     }
   } catch (err: any) {
@@ -51,25 +56,22 @@ export async function importBackupFromFile(db: SQLiteDatabase) {
   try {
     const result = await DocumentPicker.getDocumentAsync({
       type: "application/json",
-      copyToCacheDirectory: true,
+      copyToCacheDirectory: true, // importante pro FileSystem ler imediatamente :contentReference[oaicite:9]{index=9}
     });
 
-    if (result.canceled) {
-      return;
-    }
+    if (result.canceled) return;
 
     const asset = result.assets?.[0];
     if (!asset?.uri) {
-      Alert.alert(
-        "Erro",
-        "Não foi possível ler o arquivo selecionado. Tente novamente."
-      );
+      Alert.alert("Erro", "Não foi possível ler o arquivo selecionado.");
       return;
     }
 
-    const content = await FileSystem.readAsStringAsync(asset.uri);
+    // ✅ Evita o erro do TS: DocumentPickerAsset -> usamos a URI (string)
+    const file = new File(asset.uri);
+    const content = await file.text(); // lê texto :contentReference[oaicite:10]{index=10}
 
-    let parsed: any;
+    let parsed: unknown;
     try {
       parsed = JSON.parse(content);
     } catch {
@@ -77,20 +79,22 @@ export async function importBackupFromFile(db: SQLiteDatabase) {
       return;
     }
 
+    // validação mínima do formato do backup
+    const maybe = parsed as Partial<BackupFile>;
     if (
-      !parsed ||
-      typeof parsed !== "object" ||
-      parsed.version !== 1 ||
-      !Array.isArray(parsed.transactions)
+      !maybe ||
+      typeof maybe !== "object" ||
+      maybe.version !== 1 ||
+      !Array.isArray(maybe.transactions)
     ) {
       Alert.alert(
         "Backup incompatível",
-        "O arquivo não parece ser um backup do Mototrack (Versão 1)."
+        "O arquivo não parece ser um backup do Mototrack (versão 1)."
       );
       return;
     }
 
-    const backup = parsed as BackupFile;
+    const backup = maybe as BackupFile;
 
     Alert.alert(
       "Confirmar restauração",

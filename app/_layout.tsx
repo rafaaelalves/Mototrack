@@ -114,6 +114,15 @@ export default function RootLayout() {
                 contentStyle: { backgroundColor: "transparent" },
               }}
             />
+            <Stack.Screen
+              name="settings"
+              options={{
+                presentation: "card",
+                headerShown: false,
+                animation: "fade",
+                contentStyle: { backgroundColor: "transparent" },
+              }}
+            />
           </Stack>
         </SQLiteProvider>
       </SafeAreaProvider>
