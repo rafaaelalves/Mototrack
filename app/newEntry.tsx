@@ -13,6 +13,7 @@ import {
   Alert,
   Animated,
   Easing,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -217,6 +218,9 @@ export default function NewEntry() {
                     borderColor: "#FFB35A",
                     backgroundColor: "rgba(255,179,90,0.18)",
                   },
+                  type === "expense" && {
+                    transform: [{ scale: 0.95 }],
+                  },
                 ]}
                 onPress={() => {
                   setType("income");
@@ -234,6 +238,7 @@ export default function NewEntry() {
                     borderColor: "#FFB35A",
                     backgroundColor: "rgba(255,179,90,0.18)",
                   },
+                  type === "income" && { transform: [{ scale: 0.95 }] },
                 ]}
                 onPress={() => {
                   setType("expense");
@@ -316,7 +321,14 @@ export default function NewEntry() {
                       <Pressable
                         key={c.key}
                         onPress={() => setCategory(selected ? null : c.key)}
-                        style={[styles.chip, selected && styles.chipSelected]}
+                        style={({ pressed }) => [
+                          styles.chip,
+                          selected && styles.chipSelected,
+                          pressed && {
+                            opacity: 0.6,
+                            transform: [{ scale: 0.97 }],
+                          },
+                        ]}
                       >
                         <Text
                           style={[
@@ -335,16 +347,25 @@ export default function NewEntry() {
             <View style={styles.formGroup}>
               <Text style={styles.label}>Descrição</Text>
               <TextInput
-                multiline
-                placeholder="Notas adicionais (opcional)"
                 value={notes}
                 onChangeText={setNotes}
+                multiline
+                returnKeyType="done"
+                submitBehavior="blurAndSubmit"
+                onSubmitEditing={() => {
+                  Keyboard.dismiss();
+                }}
+                placeholder="Notas adicionais (opcional)"
                 style={[styles.input, styles.textarea]}
                 placeholderTextColor="rgba(255,255,255,0.45)"
               />
             </View>
             <Pressable
-              style={[styles.saveButton, !canSave && { opacity: 0.5 }]}
+              style={({ pressed }) => [
+                styles.saveButton,
+                !canSave && { opacity: 0.5 },
+                pressed && { opacity: 0.6, transform: [{ scale: 0.97 }] },
+              ]}
               onPress={handleSave}
               disabled={!canSave}
             >

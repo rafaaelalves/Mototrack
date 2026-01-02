@@ -1,4 +1,6 @@
-import { listTransactionsByMonth, Transaction } from "@/src/db/transactions";
+import { listTransactionsByMonth } from "@/src/db/transactions";
+import { Transaction, computeMonthStats } from "@/src/domain/transaction";
+import { formatBRL, formatDay, monthLabelPT } from "@/src/utils/format";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import {
@@ -27,24 +29,6 @@ import {
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
 
-function formatBRL(cents: number) {
-  const value = Math.floor(Math.abs(cents)); // garante inteiro em centavos
-  const inteiro = Math.floor(value / 100);
-  const centavos = value % 100;
-
-  const inteiroStr = inteiro.toString().replace(/\B(?=(\d{3})+(?!\d))/g, "."); // adiciona pontos de milhar
-
-  const centavosStr = centavos.toString().padStart(2, "0");
-
-  return `${inteiroStr},${centavosStr}`;
-}
-
-function formatDay(iso: string) {
-  // Espera yyyy-mm-dd
-  const parts = iso.split("-");
-  return parts[2] ?? iso;
-}
-
 // label de hora usando createdAt.
 // function formatTimeFromCreatedAt(ms: number) {
 //   return new Date(ms).toLocaleTimeString("pt-BR", {
@@ -65,14 +49,14 @@ export default function Index() {
   const Separator = () => <View style={styles.separator} />;
 
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const incomeCents = transactions.reduce(
-    (acc, t) => acc + (t.type === "income" ? t.amountCents : 0),
-    0
+
+  const monthStats = useMemo(
+    () => computeMonthStats(transactions),
+    [transactions]
   );
-  const expenseCents = transactions.reduce(
-    (acc, t) => acc + (t.type === "expense" ? t.amountCents : 0),
-    0
-  );
+
+  const incomeCents = monthStats.incomeCents;
+  const expenseCents = monthStats.expenseCents;
   const totalCents = incomeCents - expenseCents;
 
   const [search, setSearch] = useState("");
@@ -109,11 +93,7 @@ export default function Index() {
   const isCurrentMonth =
     selectedYear === now.getFullYear() && selectedMonth === now.getMonth() + 1;
 
-  const monthLabel = new Date(
-    selectedYear,
-    selectedMonth - 1,
-    1
-  ).toLocaleString("pt-BR", { month: "long", year: "numeric" });
+  const monthLabel = monthLabelPT(selectedMonth, selectedYear);
 
   const load = useCallback(async () => {
     const items = await listTransactionsByMonth(
@@ -151,11 +131,14 @@ export default function Index() {
       <View style={styles.header}>
         <View style={styles.headerTopRow}>
           <Pressable
-            style={styles.settingsButton}
+            style={({ pressed }) => [
+              styles.settingsButton,
+              pressed && { opacity: 0.6, transform: [{ scale: 0.97 }] },
+            ]}
             onPress={() => router.push("/settings")}
           >
             <GearSixIcon
-              size={22}
+              size={24}
               weight="duotone"
               color="rgba(255,255,255,0.8)"
             />
@@ -204,7 +187,10 @@ export default function Index() {
           <Text style={styles.summaryTitle}>Resumo do mês</Text>
 
           <Pressable
-            style={styles.statsButton}
+            style={({ pressed }) => [
+              styles.statsButton,
+              pressed && { opacity: 0.8, transform: [{ scale: 0.97 }] },
+            ]}
             onPress={() =>
               router.push({
                 pathname: "/stats",
@@ -298,8 +284,9 @@ export default function Index() {
               onChangeText={setSearch}
             />
             <Pressable
-              style={[
+              style={({ pressed }) => [
                 styles.filterButton,
+                pressed && { opacity: 0.6, transform: [{ scale: 0.97 }] },
                 hasFilter && { backgroundColor: "rgba(255,179,90,0.22)" },
               ]}
               onPress={() => setFilterModalVisible(true)}
@@ -381,7 +368,11 @@ export default function Index() {
         ItemSeparatorComponent={Separator}
       />
       <Pressable
-        style={[styles.add, { bottom: 30 + insets.bottom }]}
+        style={({ pressed }) => [
+          styles.add,
+          { bottom: 30 + insets.bottom },
+          pressed && { opacity: 0.6, transform: [{ scale: 0.97 }] },
+        ]}
         onPress={() => router.push("/newEntry")}
       >
         <PlusIcon size={28} weight="bold" color="#fff" />
@@ -414,7 +405,11 @@ export default function Index() {
                   <Pressable
                     key={t}
                     onPress={() => setTypeFilter(t)}
-                    style={[styles.chip, selected && styles.chipSelected]}
+                    style={({ pressed }) => [
+                      styles.chip,
+                      selected && styles.chipSelected,
+                      pressed && { opacity: 0.6, transform: [{ scale: 0.97 }] },
+                    ]}
                   >
                     <Text
                       style={[
