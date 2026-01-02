@@ -16,7 +16,15 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 function formatBRL(cents: number) {
-  return (cents / 100).toFixed(2).replace(".", ",");
+  const value = Math.floor(Math.abs(cents)); // garante inteiro em centavos
+  const inteiro = Math.floor(value / 100);
+  const centavos = value % 100;
+
+  const inteiroStr = inteiro.toString().replace(/\B(?=(\d{3})+(?!\d))/g, "."); // adiciona pontos de milhar
+
+  const centavosStr = centavos.toString().padStart(2, "0");
+
+  return `${inteiroStr},${centavosStr}`;
 }
 
 function formatBRLValue(v: number) {
@@ -487,8 +495,6 @@ const styles = StyleSheet.create({
   iconBtn: {
     padding: 8,
   },
-
-  // 🔹 ESTADO VAZIO (NOVO)
   emptyContainer: {
     paddingVertical: 32,
     paddingHorizontal: 12,
@@ -549,6 +555,7 @@ const styles = StyleSheet.create({
   diffText: {
     marginTop: 4,
     fontSize: 12,
+    color: "rgba(255,255,255,0.60)",
   },
   projLine: {
     fontSize: 13,

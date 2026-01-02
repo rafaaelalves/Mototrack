@@ -28,7 +28,15 @@ import {
 } from "react-native-safe-area-context";
 
 function formatBRL(cents: number) {
-  return (cents / 100).toFixed(2).replace(".", ",");
+  const value = Math.floor(Math.abs(cents)); // garante inteiro em centavos
+  const inteiro = Math.floor(value / 100);
+  const centavos = value % 100;
+
+  const inteiroStr = inteiro.toString().replace(/\B(?=(\d{3})+(?!\d))/g, "."); // adiciona pontos de milhar
+
+  const centavosStr = centavos.toString().padStart(2, "0");
+
+  return `${inteiroStr},${centavosStr}`;
 }
 
 function formatDay(iso: string) {
@@ -186,49 +194,58 @@ export default function Index() {
           <View style={styles.headerRightSpacer} />
         </View>
 
-        <Text style={styles.summaryTitle}>Resumo do mês</Text>
+        <View
+          style={{
+            alignItems: "flex-end",
+            flexDirection: "row",
+            justifyContent: "space-between",
+          }}
+        >
+          <Text style={styles.summaryTitle}>Resumo do mês</Text>
+
+          <Pressable
+            style={styles.statsButton}
+            onPress={() =>
+              router.push({
+                pathname: "/stats",
+                params: {
+                  year: String(selectedYear),
+                  month: String(selectedMonth),
+                },
+              })
+            }
+          >
+            <ChartBarIcon
+              size={18}
+              weight="duotone"
+              color="rgba(255,255,255,0.90)"
+            />
+            <Text style={styles.statsButtonText}>Ver detalhes</Text>
+          </Pressable>
+        </View>
 
         <View style={styles.summaryRow}>
           <View style={styles.summaryCard}>
             <Text style={styles.summaryLabel}>Entradas</Text>
-            <Text style={styles.summaryNumber}>
+            <Text style={styles.summaryNumber} numberOfLines={1}>
               R$ {formatBRL(incomeCents)}
             </Text>
           </View>
 
           <View style={styles.summaryCard}>
             <Text style={styles.summaryLabel}>Saídas</Text>
-            <Text style={styles.summaryNumber}>
+            <Text style={styles.summaryNumber} numberOfLines={1}>
               R$ {formatBRL(expenseCents)}
             </Text>
           </View>
 
           <View style={styles.summaryCard}>
             <Text style={styles.summaryLabel}>Saldo</Text>
-            <Text style={styles.summaryNumber}>R$ {formatBRL(totalCents)}</Text>
+            <Text style={styles.summaryNumber} numberOfLines={1}>
+              R$ {formatBRL(totalCents)}
+            </Text>
           </View>
         </View>
-        <Pressable
-          style={styles.statsButton}
-          onPress={() =>
-            router.push({
-              pathname: "/stats",
-              params: {
-                year: String(selectedYear),
-                month: String(selectedMonth),
-              },
-            })
-          }
-        >
-          <ChartBarIcon
-            size={18}
-            weight="duotone"
-            color="rgba(255,255,255,0.90)"
-          />
-          <Text style={styles.statsButtonText}>
-            Ver estatísticas detalhadas
-          </Text>
-        </Pressable>
 
         {/* <View style={{ flexDirection: "row", gap: 10, marginTop: 16 }}>
           <Pressable
@@ -269,7 +286,7 @@ export default function Index() {
         <View style={styles.searchRow}>
           <View style={styles.searchInputWrapper}>
             <MagnifyingGlassIcon
-              size={18}
+              size={20}
               weight="duotone"
               color="rgba(255,255,255,0.55)"
             />
@@ -280,20 +297,20 @@ export default function Index() {
               value={search}
               onChangeText={setSearch}
             />
+            <Pressable
+              style={[
+                styles.filterButton,
+                hasFilter && { backgroundColor: "rgba(255,179,90,0.22)" },
+              ]}
+              onPress={() => setFilterModalVisible(true)}
+            >
+              <FunnelIcon
+                size={20}
+                weight="duotone"
+                color="rgba(255,255,255,0.85)"
+              />
+            </Pressable>
           </View>
-          <Pressable
-            style={[
-              styles.filterButton,
-              hasFilter && { backgroundColor: "rgba(255,179,90,0.22)" },
-            ]}
-            onPress={() => setFilterModalVisible(true)}
-          >
-            <FunnelIcon
-              size={20}
-              weight="duotone"
-              color="rgba(255,255,255,0.85)"
-            />
-          </Pressable>
         </View>
       </View>
 
@@ -476,9 +493,11 @@ export const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 10,
     marginTop: 10,
+    marginBottom: 10,
   },
   summaryCard: {
     flex: 1,
+    minWidth: 0,
     backgroundColor: "rgba(255,255,255,0.06)",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.10)",
@@ -492,7 +511,7 @@ export const styles = StyleSheet.create({
     color: "rgba(255,255,255,0.70)",
   },
   summaryNumber: {
-    fontSize: 16,
+    fontSize: 14, //Original 16, mas 14 pra caber
     fontWeight: "600",
     color: "rgba(255,255,255,0.70)",
   },
