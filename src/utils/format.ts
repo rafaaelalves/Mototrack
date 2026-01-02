@@ -23,8 +23,9 @@ export function formatDay(iso: string) {
 }
 
 // (2025, 1) → "janeiro de 2025"
-export function monthLabelPT(year: number, month1to12: number) {
-  return new Date(year, month1to12 - 1, 1).toLocaleString("pt-BR", {
+export function monthLabelPT(params: { year: number; month: number }) {
+  const { year, month } = params;
+  return new Date(year, month - 1, 1).toLocaleString("pt-BR", {
     month: "long",
     year: "numeric",
   });

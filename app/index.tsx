@@ -93,7 +93,10 @@ export default function Index() {
   const isCurrentMonth =
     selectedYear === now.getFullYear() && selectedMonth === now.getMonth() + 1;
 
-  const monthLabel = monthLabelPT(selectedMonth, selectedYear);
+  const monthLabel = monthLabelPT({
+    year: selectedYear,
+    month: selectedMonth,
+  });
 
   const load = useCallback(async () => {
     const items = await listTransactionsByMonth(
