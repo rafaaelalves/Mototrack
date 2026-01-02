@@ -71,6 +71,7 @@ const CATEGORIES = [
   { key: "fuel", label: "Combustível" },
   { key: "food", label: "Alimentação" },
   { key: "maintenance", label: "Manutenção" },
+  { key: "vehicle", label: "Veículo" },
   { key: "other", label: "Outros" },
 ] as const;
 

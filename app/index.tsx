@@ -39,6 +39,15 @@ import {
 
 type TypeFilter = "all" | "income" | "expense";
 
+type CategoryFilter =
+  | "all"
+  | "fuel"
+  | "food"
+  | "maintenance"
+  | "vehicle"
+  | "other"
+  | "uncategorized";
+
 export default function Index() {
   const router = useRouter();
 
@@ -61,6 +70,7 @@ export default function Index() {
 
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("all");
   const [filterModalVisible, setFilterModalVisible] = useState(false);
 
   // Lista filtrada com base em busca + tipo
@@ -73,6 +83,14 @@ export default function Index() {
         return false;
       }
 
+      //Filtra por categoria
+      if (categoryFilter !== "all") {
+        if (t.type !== "expense") return false;
+
+        const cat = (t.category ?? "uncategorized") as CategoryFilter;
+        if (cat !== categoryFilter) return false;
+      }
+
       // Se não tem busca, só o filtro de tipo vale
       if (!query) return true;
 
@@ -82,9 +100,12 @@ export default function Index() {
 
       return title.includes(query) || notes.includes(query);
     });
-  }, [transactions, search, typeFilter]);
+  }, [transactions, search, typeFilter, categoryFilter]);
 
-  const hasFilter = search.trim().length > 0 || typeFilter !== "all";
+  const hasFilter =
+    search.trim().length > 0 ||
+    typeFilter !== "all" ||
+    categoryFilter !== "all";
 
   const now = new Date();
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
@@ -426,10 +447,48 @@ export default function Index() {
                 );
               })}
             </View>
+            <Text style={styles.modalLabel}>Categoria</Text>
+            <View style={styles.chipsRow}>
+              {(
+                [
+                  { key: "all", label: "Todas" },
+                  { key: "fuel", label: "Combustível" },
+                  { key: "food", label: "Alimentação" },
+                  { key: "maintenance", label: "Manutenção" },
+                  { key: "vehicle", label: "Veículo" },
+                  { key: "other", label: "Outros" },
+                  { key: "uncategorized", label: "Sem categoria" },
+                ] as const
+              ).map((c) => {
+                const selected = categoryFilter === c.key;
+                return (
+                  <Pressable
+                    key={c.key}
+                    onPress={() => setCategoryFilter(c.key)}
+                    style={({ pressed }) => [
+                      styles.chip,
+                      selected && styles.chipSelected,
+                      pressed && { opacity: 0.6, transform: [{ scale: 0.97 }] },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.chipText,
+                        selected && styles.chipTextSelected,
+                      ]}
+                    >
+                      {c.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
             <Pressable
               style={styles.clearButton}
               onPress={() => {
                 setTypeFilter("all");
+                setCategoryFilter("all");
                 setSearch("");
                 setFilterModalVisible(false);
               }}

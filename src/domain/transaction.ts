@@ -27,6 +27,7 @@ export type MonthStats = {
   fuelCents: number;
   foodCents: number;
   maintenanceCents: number;
+  vehicleCents: number;
   otherCents: number;
   uncategorizedCents: number;
   km: number;
@@ -41,6 +42,7 @@ export function computeMonthStats(transactions: Transaction[]): MonthStats {
   let foodCents = 0;
   let kmMeters = 0;
   let maintenanceCents = 0;
+  let vehicleCents = 0;
   let otherCents = 0;
   let uncategorizedCents = 0;
 
@@ -63,6 +65,9 @@ export function computeMonthStats(transactions: Transaction[]): MonthStats {
           break;
         case "maintenance":
           maintenanceCents += t.amountCents;
+          break;
+        case "vehicle":
+          vehicleCents += t.amountCents;
           break;
         case "other":
           otherCents += t.amountCents;
@@ -88,6 +93,7 @@ export function computeMonthStats(transactions: Transaction[]): MonthStats {
     fuelCents,
     foodCents,
     maintenanceCents,
+    vehicleCents,
     otherCents,
     uncategorizedCents,
     km,

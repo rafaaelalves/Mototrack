@@ -9,6 +9,7 @@ import {
   Animated,
   Easing,
   LayoutChangeEvent,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -31,8 +32,16 @@ export default function Stats() {
   const year = Number(params.year) || now.getFullYear();
   const month = Number(params.month) || now.getMonth() + 1;
 
+  const isCurrentMonth =
+    now.getFullYear() === year && now.getMonth() + 1 === month;
+
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [prevTransactions, setPrevTransactions] = useState<Transaction[]>([]);
+
+  const [selectedCategory, setSelectedCategory] = useState<
+    "fuel" | "food" | "maintenance" | "vehicle" | "other" | "uncategorized"
+  >("fuel");
+  const [categoryPickerVisible, setCategoryPickerVisible] = useState(false);
 
   const [page, setPage] = useState(0);
   const [pagerWidth, setPagerWidth] = useState(0);
@@ -87,11 +96,29 @@ export default function Stats() {
     [prevTransactions]
   );
 
+  const categoryStats = [
+    { key: "fuel", label: "Combustível", value: currentStats.fuelCents },
+    { key: "food", label: "Alimentação", value: currentStats.foodCents },
+    {
+      key: "maintenance",
+      label: "Manutenção",
+      value: currentStats.maintenanceCents,
+    },
+    { key: "vehicle", label: "Veículo", value: currentStats.vehicleCents },
+    { key: "other", label: "Outros", value: currentStats.otherCents },
+    {
+      key: "uncategorized",
+      label: "Sem categoria",
+      value: currentStats.uncategorizedCents,
+    },
+  ] as const;
+
+  const selected =
+    categoryStats.find((c) => c.key === selectedCategory) ?? categoryStats[0];
+
   //Projeção até o fim do mes
   const projection = useMemo(() => {
     const daysInMonth = new Date(year, month, 0).getDate();
-    const isCurrentMonth =
-      now.getFullYear() === year && now.getMonth() + 1 === month;
 
     // Se for mês atual, usamos o dia de hoje; senão, usamos o total de dias (mês passado ou futuro)
     const currentDay = isCurrentMonth ? now.getDate() : daysInMonth;
@@ -114,7 +141,7 @@ export default function Stats() {
       projectedExpenseCents,
       projectedNetCents,
     };
-  }, [currentStats, year, month, now]);
+  }, [currentStats, year, month, now, isCurrentMonth]);
 
   // Diferença de saldo vs mes anterior
   const netDiffCents = currentStats.netCents - previousStats.netCents;
@@ -123,7 +150,7 @@ export default function Stats() {
 
   const title =
     Number.isFinite(year) && Number.isFinite(month)
-      ? monthLabelPT(year, month)
+      ? monthLabelPT({ year, month })
       : "Estatísticas";
 
   const hasData = transactions.length > 0;
@@ -270,69 +297,61 @@ export default function Stats() {
                         </Text>
                       </View>
 
-                      <View style={[styles.card, { flexBasis: "100%" }]}>
-                        <Text style={styles.label}>
-                          Projeção até o fim do mês
-                        </Text>
-                        <Text style={styles.projLine}>
-                          Entradas {""}
-                          <Text style={styles.valueInLine}>
-                            R$ {formatBRL(projection.projectedIncomeCents)}
+                      {isCurrentMonth && (
+                        <View style={[styles.card, { flexBasis: "100%" }]}>
+                          <Text style={styles.label}>
+                            Projeção até o fim do mês
                           </Text>
-                        </Text>
-                        <Text style={styles.projLine}>
-                          Saídas {""}
-                          <Text style={styles.valueInLine}>
-                            R$ {formatBRL(projection.projectedExpenseCents)}
+                          <Text style={styles.projLine}>
+                            Entradas {""}
+                            <Text style={styles.valueInLine}>
+                              R$ {formatBRL(projection.projectedIncomeCents)}
+                            </Text>
                           </Text>
-                        </Text>
-                        <Text style={styles.projLine}>
-                          Saldo projetado: {""}
-                          <Text
-                            style={[
-                              styles.valueInLine,
-                              projection.projectedNetCents > 0
-                                ? styles.positive
-                                : projection.projectedNetCents < 0
-                                ? styles.negative
-                                : null,
-                            ]}
-                          >
-                            R$ {formatBRL(projection.projectedNetCents)}
+                          <Text style={styles.projLine}>
+                            Saídas {""}
+                            <Text style={styles.valueInLine}>
+                              R$ {formatBRL(projection.projectedExpenseCents)}
+                            </Text>
                           </Text>
-                        </Text>
-                      </View>
+                          <Text style={styles.projLine}>
+                            Saldo projetado: {""}
+                            <Text
+                              style={[
+                                styles.valueInLine,
+                                projection.projectedNetCents > 0
+                                  ? styles.positive
+                                  : projection.projectedNetCents < 0
+                                  ? styles.negative
+                                  : null,
+                              ]}
+                            >
+                              R$ {formatBRL(projection.projectedNetCents)}
+                            </Text>
+                          </Text>
+                        </View>
+                      )}
                     </View>
                   </View>
 
                   {/* PAGE 2 - Categorias */}
                   <View style={{ width: pagerWidth }}>
                     <View style={styles.grid}>
-                      <View style={styles.card}>
-                        <Text style={styles.label}>Combustível</Text>
-                        <Text style={styles.value}>
-                          R$ {formatBRL(currentStats.fuelCents)}
-                        </Text>
-                      </View>
+                      <View style={[styles.card, { flexBasis: "100%" }]}>
+                        <Text style={styles.label}>Gastos por categoria</Text>
 
-                      <View style={styles.card}>
-                        <Text style={styles.label}>Alimentação</Text>
-                        <Text style={styles.value}>
-                          R$ {formatBRL(currentStats.foodCents)}
-                        </Text>
-                      </View>
+                        <Pressable
+                          style={styles.categorySelector}
+                          onPress={() => setCategoryPickerVisible(true)}
+                        >
+                          <Text style={styles.categorySelectorText}>
+                            {selected.label}
+                          </Text>
+                          <Text style={styles.categorySelectorArrow}>▼</Text>
+                        </Pressable>
 
-                      <View style={styles.card}>
-                        <Text style={styles.label}>Manutenção</Text>
-                        <Text style={styles.value}>
-                          R$ {formatBRL(currentStats.maintenanceCents)}
-                        </Text>
-                      </View>
-
-                      <View style={styles.card}>
-                        <Text style={styles.label}>Outros</Text>
-                        <Text style={styles.value}>
-                          R$ {formatBRL(currentStats.otherCents)}
+                        <Text style={[styles.value, { marginTop: 8 }]}>
+                          R$ {formatBRL(selected.value)}
                         </Text>
                       </View>
 
@@ -381,6 +400,40 @@ export default function Stats() {
               <View style={[styles.dot, page === 0 && styles.dotActive]} />
               <View style={[styles.dot, page === 1 && styles.dotActive]} />
             </View>
+
+            <Modal
+              visible={categoryPickerVisible}
+              transparent
+              animationType="fade"
+              onRequestClose={() => setCategoryPickerVisible(false)}
+            >
+              <Pressable
+                style={styles.categoryModalOverlay}
+                onPress={() => setCategoryPickerVisible(false)}
+              >
+                <View style={styles.categoryModalCard}>
+                  <Text style={styles.categoryModalTitle}>
+                    Selecionar categoria
+                  </Text>
+
+                  {categoryStats.map((c) => (
+                    <Pressable
+                      key={c.key}
+                      style={styles.categoryOption}
+                      onPress={() => {
+                        setSelectedCategory(c.key);
+                        setCategoryPickerVisible(false);
+                      }}
+                    >
+                      <Text style={styles.categoryOptionText}>{c.label}</Text>
+                      {selectedCategory === c.key && (
+                        <Text style={styles.categoryOptionCheck}>●</Text>
+                      )}
+                    </Pressable>
+                  ))}
+                </View>
+              </Pressable>
+            </Modal>
           </>
         )}
       </Animated.View>
@@ -514,5 +567,84 @@ const styles = StyleSheet.create({
   },
   dotActive: {
     backgroundColor: "#FFB35A",
+  },
+  chipsRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 12,
+  },
+  chip: {
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.20)",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.04)",
+  },
+  chipSelected: {
+    borderColor: "#FFB35A",
+    backgroundColor: "rgba(255,179,90,0.18)",
+  },
+  chipText: {
+    fontSize: 13,
+    color: "rgba(255,255,255,0.80)",
+  },
+  chipTextSelected: {
+    fontWeight: "700",
+    color: "rgba(255,255,255,0.95)",
+  },
+  categorySelector: {
+    marginTop: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
+    backgroundColor: "rgba(255,255,255,0.06)",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  categorySelectorText: {
+    fontSize: 13,
+    color: "rgba(255,255,255,0.90)",
+  },
+  categorySelectorArrow: {
+    fontSize: 10,
+    color: "rgba(255,255,255,0.70)",
+  },
+
+  categoryModalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    justifyContent: "flex-end",
+  },
+  categoryModalCard: {
+    backgroundColor: "rgba(10,10,26,0.98)",
+    padding: 16,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.16)",
+  },
+  categoryModalTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "rgba(255,255,255,0.95)",
+    marginBottom: 10,
+  },
+  categoryOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 8,
+  },
+  categoryOptionText: {
+    fontSize: 14,
+    color: "rgba(255,255,255,0.90)",
+  },
+  categoryOptionCheck: {
+    fontSize: 12,
+    color: "#FFB35A",
   },
 });
