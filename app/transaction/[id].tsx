@@ -1,9 +1,7 @@
-import {
-  deleteTransaction,
-  getTransactionById,
-  Transaction,
-} from "@/src/db/transactions";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { deleteTransaction, getTransactionById } from "@/src/db/transactions";
+import { Transaction } from "@/src/domain/transaction";
+import { formatBRL, formatDateBR } from "@/src/utils/format";
+import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import {
   CalendarBlank,
@@ -16,20 +14,9 @@ import {
   TrashSimple,
   X,
 } from "phosphor-react-native";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-
-function formatBRL(cents: number) {
-  return (cents / 100).toFixed(2).replace(".", ",");
-}
-
-function formatDateBR(iso: string) {
-  // iso esperado: yyyy-mm-dd
-  const [y, m, d] = iso.split("-");
-  if (!y || !m || !d) return iso;
-  return `${d}/${m}/${y}`;
-}
 
 function categoryLabel(key: string | null) {
   switch (key) {
@@ -56,13 +43,17 @@ export default function TransactionDetails() {
 
   const [tx, setTx] = useState<Transaction | null>(null);
 
-  useEffect(() => {
+  const load = useCallback(async () => {
     if (!Number.isFinite(id)) return;
-    (async () => {
-      const row = await getTransactionById(db, id);
-      setTx(row);
-    })();
+    const row = await getTransactionById(db, id);
+    setTx(row);
   }, [db, id]);
+
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load])
+  );
 
   const header = useMemo(() => {
     if (!tx) return null;

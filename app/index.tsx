@@ -1,4 +1,6 @@
-import { listTransactionsByMonth, Transaction } from "@/src/db/transactions";
+import { listTransactionsByMonth } from "@/src/db/transactions";
+import { Transaction, computeMonthStats } from "@/src/domain/transaction";
+import { formatBRL, formatDay, monthLabelPT } from "@/src/utils/format";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import {
@@ -27,16 +29,6 @@ import {
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
 
-function formatBRL(cents: number) {
-  return (cents / 100).toFixed(2).replace(".", ",");
-}
-
-function formatDay(iso: string) {
-  // Espera yyyy-mm-dd
-  const parts = iso.split("-");
-  return parts[2] ?? iso;
-}
-
 // label de hora usando createdAt.
 // function formatTimeFromCreatedAt(ms: number) {
 //   return new Date(ms).toLocaleTimeString("pt-BR", {
@@ -57,14 +49,14 @@ export default function Index() {
   const Separator = () => <View style={styles.separator} />;
 
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const incomeCents = transactions.reduce(
-    (acc, t) => acc + (t.type === "income" ? t.amountCents : 0),
-    0
+
+  const monthStats = useMemo(
+    () => computeMonthStats(transactions),
+    [transactions]
   );
-  const expenseCents = transactions.reduce(
-    (acc, t) => acc + (t.type === "expense" ? t.amountCents : 0),
-    0
-  );
+
+  const incomeCents = monthStats.incomeCents;
+  const expenseCents = monthStats.expenseCents;
   const totalCents = incomeCents - expenseCents;
 
   const [search, setSearch] = useState("");
@@ -101,11 +93,7 @@ export default function Index() {
   const isCurrentMonth =
     selectedYear === now.getFullYear() && selectedMonth === now.getMonth() + 1;
 
-  const monthLabel = new Date(
-    selectedYear,
-    selectedMonth - 1,
-    1
-  ).toLocaleString("pt-BR", { month: "long", year: "numeric" });
+  const monthLabel = monthLabelPT(selectedMonth, selectedYear);
 
   const load = useCallback(async () => {
     const items = await listTransactionsByMonth(
@@ -143,11 +131,14 @@ export default function Index() {
       <View style={styles.header}>
         <View style={styles.headerTopRow}>
           <Pressable
-            style={styles.settingsButton}
+            style={({ pressed }) => [
+              styles.settingsButton,
+              pressed && { opacity: 0.6, transform: [{ scale: 0.97 }] },
+            ]}
             onPress={() => router.push("/settings")}
           >
             <GearSixIcon
-              size={22}
+              size={24}
               weight="duotone"
               color="rgba(255,255,255,0.8)"
             />
@@ -186,49 +177,61 @@ export default function Index() {
           <View style={styles.headerRightSpacer} />
         </View>
 
-        <Text style={styles.summaryTitle}>Resumo do mês</Text>
+        <View
+          style={{
+            alignItems: "flex-end",
+            flexDirection: "row",
+            justifyContent: "space-between",
+          }}
+        >
+          <Text style={styles.summaryTitle}>Resumo do mês</Text>
+
+          <Pressable
+            style={({ pressed }) => [
+              styles.statsButton,
+              pressed && { opacity: 0.8, transform: [{ scale: 0.97 }] },
+            ]}
+            onPress={() =>
+              router.push({
+                pathname: "/stats",
+                params: {
+                  year: String(selectedYear),
+                  month: String(selectedMonth),
+                },
+              })
+            }
+          >
+            <ChartBarIcon
+              size={18}
+              weight="duotone"
+              color="rgba(255,255,255,0.90)"
+            />
+            <Text style={styles.statsButtonText}>Ver detalhes</Text>
+          </Pressable>
+        </View>
 
         <View style={styles.summaryRow}>
           <View style={styles.summaryCard}>
             <Text style={styles.summaryLabel}>Entradas</Text>
-            <Text style={styles.summaryNumber}>
+            <Text style={styles.summaryNumber} numberOfLines={1}>
               R$ {formatBRL(incomeCents)}
             </Text>
           </View>
 
           <View style={styles.summaryCard}>
             <Text style={styles.summaryLabel}>Saídas</Text>
-            <Text style={styles.summaryNumber}>
+            <Text style={styles.summaryNumber} numberOfLines={1}>
               R$ {formatBRL(expenseCents)}
             </Text>
           </View>
 
           <View style={styles.summaryCard}>
             <Text style={styles.summaryLabel}>Saldo</Text>
-            <Text style={styles.summaryNumber}>R$ {formatBRL(totalCents)}</Text>
+            <Text style={styles.summaryNumber} numberOfLines={1}>
+              R$ {formatBRL(totalCents)}
+            </Text>
           </View>
         </View>
-        <Pressable
-          style={styles.statsButton}
-          onPress={() =>
-            router.push({
-              pathname: "/stats",
-              params: {
-                year: String(selectedYear),
-                month: String(selectedMonth),
-              },
-            })
-          }
-        >
-          <ChartBarIcon
-            size={18}
-            weight="duotone"
-            color="rgba(255,255,255,0.90)"
-          />
-          <Text style={styles.statsButtonText}>
-            Ver estatísticas detalhadas
-          </Text>
-        </Pressable>
 
         {/* <View style={{ flexDirection: "row", gap: 10, marginTop: 16 }}>
           <Pressable
@@ -269,7 +272,7 @@ export default function Index() {
         <View style={styles.searchRow}>
           <View style={styles.searchInputWrapper}>
             <MagnifyingGlassIcon
-              size={18}
+              size={20}
               weight="duotone"
               color="rgba(255,255,255,0.55)"
             />
@@ -280,20 +283,21 @@ export default function Index() {
               value={search}
               onChangeText={setSearch}
             />
+            <Pressable
+              style={({ pressed }) => [
+                styles.filterButton,
+                pressed && { opacity: 0.6, transform: [{ scale: 0.97 }] },
+                hasFilter && { backgroundColor: "rgba(255,179,90,0.22)" },
+              ]}
+              onPress={() => setFilterModalVisible(true)}
+            >
+              <FunnelIcon
+                size={20}
+                weight="duotone"
+                color="rgba(255,255,255,0.85)"
+              />
+            </Pressable>
           </View>
-          <Pressable
-            style={[
-              styles.filterButton,
-              hasFilter && { backgroundColor: "rgba(255,179,90,0.22)" },
-            ]}
-            onPress={() => setFilterModalVisible(true)}
-          >
-            <FunnelIcon
-              size={20}
-              weight="duotone"
-              color="rgba(255,255,255,0.85)"
-            />
-          </Pressable>
         </View>
       </View>
 
@@ -364,7 +368,11 @@ export default function Index() {
         ItemSeparatorComponent={Separator}
       />
       <Pressable
-        style={[styles.add, { bottom: 30 + insets.bottom }]}
+        style={({ pressed }) => [
+          styles.add,
+          { bottom: 30 + insets.bottom },
+          pressed && { opacity: 0.6, transform: [{ scale: 0.97 }] },
+        ]}
         onPress={() => router.push("/newEntry")}
       >
         <PlusIcon size={28} weight="bold" color="#fff" />
@@ -397,7 +405,11 @@ export default function Index() {
                   <Pressable
                     key={t}
                     onPress={() => setTypeFilter(t)}
-                    style={[styles.chip, selected && styles.chipSelected]}
+                    style={({ pressed }) => [
+                      styles.chip,
+                      selected && styles.chipSelected,
+                      pressed && { opacity: 0.6, transform: [{ scale: 0.97 }] },
+                    ]}
                   >
                     <Text
                       style={[
@@ -476,9 +488,11 @@ export const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 10,
     marginTop: 10,
+    marginBottom: 10,
   },
   summaryCard: {
     flex: 1,
+    minWidth: 0,
     backgroundColor: "rgba(255,255,255,0.06)",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.10)",
@@ -492,7 +506,7 @@ export const styles = StyleSheet.create({
     color: "rgba(255,255,255,0.70)",
   },
   summaryNumber: {
-    fontSize: 16,
+    fontSize: 14, //Original 16, mas 14 pra caber
     fontWeight: "600",
     color: "rgba(255,255,255,0.70)",
   },

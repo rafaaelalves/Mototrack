@@ -1,20 +1,5 @@
 import type { SQLiteDatabase } from "expo-sqlite";
-
-export type TransactionType = "income" | "expense";
-
-export type Transaction = {
-  id: number;
-  dateISO: string;
-  type: TransactionType;
-  amountCents: number;
-  title: string;
-  createdAt: number;
-  updatedAt: number;
-  deletedAt: number | null;
-  notes: string | null;
-  category: string | null;
-  distanceMeters: number | null;
-};
+import { Transaction } from "../domain/transaction.js";
 
 export type NewTransactionInput = Omit<
   Transaction,

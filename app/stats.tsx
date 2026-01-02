@@ -1,4 +1,6 @@
-import { listTransactionsByMonth, Transaction } from "@/src/db/transactions";
+import { listTransactionsByMonth } from "@/src/db/transactions";
+import { Transaction, computeMonthStats } from "@/src/domain/transaction";
+import { formatBRL, formatBRLValue, monthLabelPT } from "@/src/utils/format";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { ChartBarIcon, X } from "phosphor-react-native";
@@ -14,68 +16,6 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-
-function formatBRL(cents: number) {
-  return (cents / 100).toFixed(2).replace(".", ",");
-}
-
-function formatBRLValue(v: number) {
-  return v.toFixed(2).replace(".", ",");
-}
-
-function monthLabelPT(year: number, month1to12: number) {
-  return new Date(year, month1to12 - 1, 1).toLocaleString("pt-BR", {
-    month: "long",
-    year: "numeric",
-  });
-}
-
-function computeStats(transactions: Transaction[]) {
-  let incomeCents = 0;
-  let expenseCents = 0;
-  let fuelCents = 0;
-  let foodCents = 0;
-  let kmMeters = 0;
-  let maintenanceCents = 0;
-  let otherCents = 0;
-  let uncategorizedCents = 0;
-
-  for (const t of transactions) {
-    if (t.type === "income") {
-      incomeCents += t.amountCents;
-      if (typeof t.distanceMeters === "number" && t.distanceMeters > 0) {
-        kmMeters += t.distanceMeters;
-      }
-    } else {
-      expenseCents += t.amountCents;
-      if (t.category === "fuel") fuelCents += t.amountCents;
-      else if (t.category === "food") foodCents += t.amountCents;
-      else if (t.category === "maintenance") maintenanceCents += t.amountCents;
-      else if (t.category === "other") otherCents += t.amountCents;
-      else uncategorizedCents += t.amountCents;
-    }
-  }
-
-  const netCents = incomeCents - expenseCents;
-  const km = kmMeters / 1000;
-
-  const netPerKm = km > 0 ? netCents / 100 / km : null; // R$/km (saldo)
-  const costPerKm = km > 0 ? expenseCents / 100 / km : null; // R$/km (gastos)
-
-  return {
-    incomeCents,
-    expenseCents,
-    netCents,
-    fuelCents,
-    foodCents,
-    maintenanceCents,
-    otherCents,
-    uncategorizedCents,
-    km,
-    netPerKm,
-    costPerKm,
-  };
-}
 
 export default function Stats() {
   const router = useRouter();
@@ -139,11 +79,11 @@ export default function Stats() {
 
   //stats do mes atual + mes anterior
   const currentStats = useMemo(
-    () => computeStats(transactions),
+    () => computeMonthStats(transactions),
     [transactions]
   );
   const previousStats = useMemo(
-    () => computeStats(prevTransactions),
+    () => computeMonthStats(prevTransactions),
     [prevTransactions]
   );
 
@@ -487,8 +427,6 @@ const styles = StyleSheet.create({
   iconBtn: {
     padding: 8,
   },
-
-  // 🔹 ESTADO VAZIO (NOVO)
   emptyContainer: {
     paddingVertical: 32,
     paddingHorizontal: 12,
@@ -549,6 +487,7 @@ const styles = StyleSheet.create({
   diffText: {
     marginTop: 4,
     fontSize: 12,
+    color: "rgba(255,255,255,0.60)",
   },
   projLine: {
     fontSize: 13,
