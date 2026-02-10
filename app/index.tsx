@@ -428,7 +428,10 @@ export default function Index() {
                 return (
                   <Pressable
                     key={t}
-                    onPress={() => setTypeFilter(t)}
+                    onPress={() => {
+                      setTypeFilter(t);
+                      setCategoryFilter("all");
+                    }}
                     style={({ pressed }) => [
                       styles.chip,
                       selected && styles.chipSelected,
@@ -461,13 +464,19 @@ export default function Index() {
                 ] as const
               ).map((c) => {
                 const selected = categoryFilter === c.key;
+                const disabled = typeFilter !== "expense";
                 return (
                   <Pressable
                     key={c.key}
-                    onPress={() => setCategoryFilter(c.key)}
+                    onPress={() => {
+                      if (!disabled) {
+                        setCategoryFilter(c.key);
+                      }
+                    }}
                     style={({ pressed }) => [
                       styles.chip,
                       selected && styles.chipSelected,
+                      disabled && styles.chipDisabled,
                       pressed && { opacity: 0.6, transform: [{ scale: 0.97 }] },
                     ]}
                   >
@@ -743,6 +752,7 @@ export const styles = StyleSheet.create({
   },
   chipsRow: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 8,
     marginBottom: 12,
   },
@@ -765,6 +775,9 @@ export const styles = StyleSheet.create({
   chipTextSelected: {
     fontWeight: "700",
     color: "rgba(255,255,255,0.95)",
+  },
+  chipDisabled: {
+    opacity: 0.6,
   },
   clearButton: {
     alignSelf: "flex-start",
