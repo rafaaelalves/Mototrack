@@ -10,7 +10,7 @@ function backupFileName() {
   const d = new Date();
   const date = d.toISOString().slice(0, 10);
   const time = `${String(d.getHours()).padStart(2, "0")}${String(
-    d.getMinutes()
+    d.getMinutes(),
   ).padStart(2, "0")}${String(d.getSeconds()).padStart(2, "0")}`;
   return `mototrack-backup-${date}-${time}.json`;
 }
@@ -22,14 +22,14 @@ export async function exportBackup(db: SQLiteDatabase) {
 
     // (opcional, mas organizado) /document/backups
     const backupsDir = new Directory(Paths.document, "backups");
-    backupsDir.create({ intermediates: true, idempotent: true }); // cria a pasta se precisar :contentReference[oaicite:5]{index=5}
+    await backupsDir.create({ intermediates: true, idempotent: true }); // cria a pasta se precisar :contentReference[oaicite:5]{index=5}
 
     const fileName = backupFileName();
     const file = new File(backupsDir, fileName);
 
     // cria o arquivo e sobrescreve se existir (por segurança)
-    file.create({ intermediates: true, overwrite: true }); // :contentReference[oaicite:6]{index=6}
-    file.write(json); // escreve o conteúdo :contentReference[oaicite:7]{index=7}
+    await file.create({ intermediates: true, overwrite: true }); // :contentReference[oaicite:6]{index=6}
+    await file.write(json); // escreve o conteúdo :contentReference[oaicite:7]{index=7}
 
     if (await Sharing.isAvailableAsync()) {
       await Sharing.shareAsync(file.uri, {
@@ -40,14 +40,14 @@ export async function exportBackup(db: SQLiteDatabase) {
     } else {
       Alert.alert(
         "Backup gerado",
-        `Arquivo criado em:\n${file.uri}\n\nDica: em geral o jeito mais confiável é usar o botão de compartilhar quando disponível.`
+        `Arquivo criado em:\n${file.uri}\n\nDica: em geral o jeito mais confiável é usar o botão de compartilhar quando disponível.`,
       );
     }
   } catch (err: any) {
     console.error(err);
     Alert.alert(
       "Erro ao exportar backup",
-      err?.message ?? "Tente novamente mais tarde."
+      err?.message ?? "Tente novamente mais tarde.",
     );
   }
 }
@@ -89,7 +89,7 @@ export async function importBackupFromFile(db: SQLiteDatabase) {
     ) {
       Alert.alert(
         "Backup incompatível",
-        "O arquivo não parece ser um backup do Mototrack (versão 1)."
+        "O arquivo não parece ser um backup do Mototrack (versão 1).",
       );
       return;
     }
@@ -109,24 +109,24 @@ export async function importBackupFromFile(db: SQLiteDatabase) {
               await applyBackup(db, backup);
               Alert.alert(
                 "Backup restaurado",
-                "Os dados foram importados com sucesso."
+                "Os dados foram importados com sucesso.",
               );
             } catch (err: any) {
               console.error(err);
               Alert.alert(
                 "Erro ao restaurar backup",
-                err?.message ?? "Tente novamente mais tarde."
+                err?.message ?? "Tente novamente mais tarde.",
               );
             }
           },
         },
-      ]
+      ],
     );
   } catch (err: any) {
     console.error(err);
     Alert.alert(
       "Erro ao importar backup",
-      err?.message ?? "Tente novamente mais tarde."
+      err?.message ?? "Tente novamente mais tarde.",
     );
   }
 }
