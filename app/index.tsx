@@ -1,6 +1,7 @@
 import { listTransactionsByDateRange } from "@/src/db/transactions";
 import { CategoryOptions } from "@/src/domain/categories";
 import { Transaction, computePeriodStats } from "@/src/domain/transaction";
+import { MonthlyIncomeExpenseChart } from "@/src/ui/charts/MonthlyIncomeExpenseChart";
 import { getMonthRange, getWeekRangeMonday } from "@/src/utils/date";
 import {
   formatBRL,
@@ -19,7 +20,7 @@ import {
   PlusCircleIcon,
 } from "phosphor-react-native";
 import { useCallback, useMemo, useState } from "react";
-import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import {
   SafeAreaView,
   useSafeAreaInsets,
@@ -87,9 +88,14 @@ export default function Index() {
   });
   const headerTitle = viewMode === "month" ? monthLabel : "Semana atual";
 
+  const todayKey = toISODate(new Date());
+
   const currentWeekRange = useMemo(
-    () => getWeekRangeMonday(new Date(), { clampEndToToday: true }),
-    [viewMode],
+    () =>
+      getWeekRangeMonday(parseISODate(todayKey), {
+        clampEndToToday: true,
+      }),
+    [todayKey],
   );
 
   const isCurrentMonth =
@@ -352,166 +358,191 @@ export default function Index() {
             </Text>
           </View>
         </View>
+      </View>
+      <ScrollView
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingBottom: 24 + insets.bottom },
+        ]}
+      >
+        <View style={{ paddingHorizontal: 20 }}>
+          {viewMode === "month" ? (
+            <MonthlyIncomeExpenseChart
+              year={selectedYear}
+              month={selectedMonth}
+              transactions={periodTransactions}
+            />
+          ) : null}
 
-        <View style={styles.infoGrid}>
-          <View style={styles.infoCard}>
-            <Text style={styles.infoLabel}>Saldo anterior</Text>
-            <Text style={styles.infoValue}>
-              R$ {formatBRL(previousStats.netCents)}
-            </Text>
-          </View>
-
-          <View style={styles.infoCard}>
-            <Text style={styles.infoLabel}>Diferença vs anterior</Text>
-            <Text
-              style={[
-                styles.infoValue,
-                netDiffCents > 0
-                  ? styles.positive
-                  : netDiffCents < 0
-                    ? styles.negative
-                    : null,
-              ]}
-            >
-              {netDiffCents === 0
-                ? "R$ 0,00"
-                : `${netDiffCents > 0 ? "+" : "-"}R$ ${formatBRL(
-                    Math.abs(netDiffCents),
-                  )}`}
-            </Text>
-          </View>
-
-          <View style={[styles.infoCard, styles.infoCardFull]}>
-            <Text style={styles.infoLabel}>{projection.label}</Text>
-            <Text style={styles.infoLine}>
-              Entradas:{" "}
-              <Text style={styles.infoValueInline}>
-                R$ {formatBRL(projection.projectedIncomeCents)}
+          <View style={styles.infoGrid}>
+            <View style={styles.infoCard}>
+              <Text style={styles.infoLabel}>Saldo anterior</Text>
+              <Text style={styles.infoValue}>
+                R$ {formatBRL(previousStats.netCents)}
               </Text>
-            </Text>
-            <Text style={styles.infoLine}>
-              Saídas:{" "}
-              <Text style={styles.infoValueInline}>
-                R$ {formatBRL(projection.projectedExpenseCents)}
-              </Text>
-            </Text>
-            <Text style={styles.infoLine}>
-              Saldo:{" "}
+            </View>
+
+            <View style={styles.infoCard}>
+              <Text style={styles.infoLabel}>Diferença vs anterior</Text>
               <Text
                 style={[
-                  styles.infoValueInline,
-                  projection.projectedNetCents > 0
+                  styles.infoValue,
+                  netDiffCents > 0
                     ? styles.positive
-                    : projection.projectedNetCents < 0
+                    : netDiffCents < 0
                       ? styles.negative
                       : null,
                 ]}
               >
-                R$ {formatBRL(projection.projectedNetCents)}
+                {netDiffCents === 0
+                  ? "R$ 0,00"
+                  : `${netDiffCents > 0 ? "+" : "-"}R$ ${formatBRL(
+                      Math.abs(netDiffCents),
+                    )}`}
               </Text>
-            </Text>
-          </View>
-
-          <View style={[styles.infoCard, styles.infoCardFull]}>
-            <Text style={styles.infoLabel}>Gasto por categoria (top 4)</Text>
-            {categoryTotals.every((c) => c.value === 0) ? (
-              <Text style={styles.emptySubtitle}>Sem gastos no período.</Text>
-            ) : (
-              categoryTotals.map((c) => (
-                <View key={c.key} style={styles.categoryRow}>
-                  <Text style={styles.categoryLabel}>{c.label}</Text>
-                  <Text style={styles.categoryValue}>
-                    R$ {formatBRL(c.value)}
-                  </Text>
-                </View>
-              ))
-            )}
-          </View>
-        </View>
-
-        <View style={styles.previewHeader}>
-          <Text style={styles.previewTitle}>Últimos lançamentos</Text>
-          <Pressable
-            style={({ pressed }) => [
-              styles.allButton,
-              pressed && { opacity: 0.7, transform: [{ scale: 0.97 }] },
-            ]}
-            onPress={() =>
-              router.push({
-                pathname: "/transactions",
-                params: {
-                  year: String(selectedYear),
-                  month: String(selectedMonth),
-                },
-              })
-            }
-          >
-            <CardsThreeIcon size={18} weight="bold" color="#1b7a33" />
-            <Text style={styles.allButtonText}>Ver todos</Text>
-          </Pressable>
-        </View>
-      </View>
-
-      <FlatList
-        data={previewTransactions}
-        keyExtractor={(item) => String(item.id)}
-        contentContainerStyle={[
-          styles.transactionList,
-          { paddingBottom: insets.bottom },
-        ]}
-        renderItem={({ item }) => (
-          <Pressable
-            onPress={() =>
-              router.push({
-                pathname: "/transaction/[id]",
-                params: { id: String(item.id) },
-              })
-            }
-          >
-            <View style={styles.transactionItemList}>
-              {item.type === "expense" ? (
-                <MinusCircleIcon size={24} weight="duotone" color="#ff3b30" />
-              ) : (
-                <PlusCircleIcon size={24} weight="duotone" color="#28a745" />
-              )}
-
-              <View style={styles.dayCol}>
-                <Text style={styles.dayText}>Dia</Text>
-                <Text style={styles.dayNumber}>{formatDay(item.dateISO)}</Text>
-              </View>
-
-              <View style={styles.transactionContent}>
-                <View style={styles.transactionHeader}>
-                  <Text style={styles.titleText} numberOfLines={1}>
-                    {item.title}
-                  </Text>
-
-                  <Text
-                    style={[
-                      styles.amountText,
-                      item.type === "income"
-                        ? styles.amountIncome
-                        : styles.amountExpense,
-                    ]}
-                  >
-                    {item.type === "income" ? "+" : "-"}R${" "}
-                    {formatBRL(item.amountCents)}
-                  </Text>
-                </View>
-              </View>
             </View>
-          </Pressable>
-        )}
-        ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyTitle}>Sem lançamentos</Text>
-            <Text style={styles.emptySubtitle}>
-              Use o botão + para registrar sua primeira entrada ou saída.
-            </Text>
+
+            <View style={[styles.infoCard, styles.infoCardFull]}>
+              <Text style={styles.infoLabel}>{projection.label}</Text>
+              <Text style={styles.infoLine}>
+                Entradas:{" "}
+                <Text style={styles.infoValueInline}>
+                  R$ {formatBRL(projection.projectedIncomeCents)}
+                </Text>
+              </Text>
+              <Text style={styles.infoLine}>
+                Saídas:{" "}
+                <Text style={styles.infoValueInline}>
+                  R$ {formatBRL(projection.projectedExpenseCents)}
+                </Text>
+              </Text>
+              <Text style={styles.infoLine}>
+                Saldo:{" "}
+                <Text
+                  style={[
+                    styles.infoValueInline,
+                    projection.projectedNetCents > 0
+                      ? styles.positive
+                      : projection.projectedNetCents < 0
+                        ? styles.negative
+                        : null,
+                  ]}
+                >
+                  R$ {formatBRL(projection.projectedNetCents)}
+                </Text>
+              </Text>
+            </View>
+
+            <View style={[styles.infoCard, styles.infoCardFull]}>
+              <Text style={styles.infoLabel}>Gasto por categoria (top 4)</Text>
+              {categoryTotals.every((c) => c.value === 0) ? (
+                <Text style={styles.emptySubtitle}>Sem gastos no período.</Text>
+              ) : (
+                categoryTotals.map((c) => (
+                  <View key={c.key} style={styles.categoryRow}>
+                    <Text style={styles.categoryLabel}>{c.label}</Text>
+                    <Text style={styles.categoryValue}>
+                      R$ {formatBRL(c.value)}
+                    </Text>
+                  </View>
+                ))
+              )}
+            </View>
           </View>
-        }
-        ItemSeparatorComponent={Separator}
-      />
+
+          <View style={styles.previewHeader}>
+            <Text style={styles.previewTitle}>Últimos lançamentos</Text>
+            <Pressable
+              style={({ pressed }) => [
+                styles.allButton,
+                pressed && { opacity: 0.7, transform: [{ scale: 0.97 }] },
+              ]}
+              onPress={() =>
+                router.push({
+                  pathname: "/transactions",
+                  params: {
+                    year: String(selectedYear),
+                    month: String(selectedMonth),
+                  },
+                })
+              }
+            >
+              <CardsThreeIcon size={18} weight="bold" color="#1b7a33" />
+              <Text style={styles.allButtonText}>Ver todos</Text>
+            </Pressable>
+          </View>
+
+          {previewTransactions.length > 0 ? (
+            <View style={styles.transactionList}>
+              {previewTransactions.map((item, index) => (
+                <View key={item.id}>
+                  <Pressable
+                    onPress={() =>
+                      router.push({
+                        pathname: "/transaction/[id]",
+                        params: { id: String(item.id) },
+                      })
+                    }
+                  >
+                    <View style={styles.transactionItemList}>
+                      {item.type === "expense" ? (
+                        <MinusCircleIcon
+                          size={24}
+                          weight="duotone"
+                          color="#ff3b30"
+                        />
+                      ) : (
+                        <PlusCircleIcon
+                          size={24}
+                          weight="duotone"
+                          color="#28a745"
+                        />
+                      )}
+
+                      <View style={styles.dayCol}>
+                        <Text style={styles.dayText}>Dia</Text>
+                        <Text style={styles.dayNumber}>
+                          {formatDay(item.dateISO)}
+                        </Text>
+                      </View>
+
+                      <View style={styles.transactionContent}>
+                        <View style={styles.transactionHeader}>
+                          <Text style={styles.titleText} numberOfLines={1}>
+                            {item.title}
+                          </Text>
+
+                          <Text
+                            style={[
+                              styles.amountText,
+                              item.type === "income"
+                                ? styles.amountIncome
+                                : styles.amountExpense,
+                            ]}
+                          >
+                            {item.type === "income" ? "+" : "-"}
+                            R$ {formatBRL(item.amountCents)}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                  </Pressable>
+
+                  {index < previewTransactions.length - 1 ? (
+                    <Separator />
+                  ) : null}
+                </View>
+              ))}
+            </View>
+          ) : (
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyTitle}>
+                Sem lançamentos neste período
+              </Text>
+            </View>
+          )}
+        </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -698,7 +729,11 @@ export const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "700",
   },
+  scrollContent: {
+    flexGrow: 1,
+  },
   transactionList: {
+    marginTop: 10,
     paddingBottom: 20,
   },
   transactionItemList: {
