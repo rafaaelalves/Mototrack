@@ -23,8 +23,9 @@ export function formatDay(iso: string) {
 }
 
 // (2025, 1) → "janeiro de 2025"
-export function monthLabelPT(year: number, month1to12: number) {
-  return new Date(year, month1to12 - 1, 1).toLocaleString("pt-BR", {
+export function monthLabelPT(params: { year: number; month: number }) {
+  const { year, month } = params;
+  return new Date(year, month - 1, 1).toLocaleString("pt-BR", {
     month: "long",
     year: "numeric",
   });
@@ -36,4 +37,16 @@ export function formatDateBR(iso: string) {
   const [y, m, d] = iso.split("-");
   if (!y || !m || !d) return iso;
   return `${d}/${m}/${y}`;
+}
+
+export function toISODate(d: Date) {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+export function formatSignedBRL(cents: number) {
+  const sign = cents < 0 ? "-" : "";
+  return `${sign}${formatBRL(Math.abs(cents))}`;
 }

@@ -97,15 +97,6 @@ export default function RootLayout() {
               }}
             />
             <Stack.Screen
-              name="stats"
-              options={{
-                presentation: "transparentModal",
-                headerShown: false,
-                animation: "none",
-                contentStyle: { backgroundColor: "transparent" },
-              }}
-            />
-            <Stack.Screen
               name="transaction/[id]"
               options={{
                 presentation: "transparentModal",
@@ -116,6 +107,15 @@ export default function RootLayout() {
             />
             <Stack.Screen
               name="settings"
+              options={{
+                presentation: "card",
+                headerShown: false,
+                animation: "fade",
+                contentStyle: { backgroundColor: "transparent" },
+              }}
+            />
+            <Stack.Screen
+              name="transactions"
               options={{
                 presentation: "card",
                 headerShown: false,

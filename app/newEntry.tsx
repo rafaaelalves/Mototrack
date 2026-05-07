@@ -3,6 +3,10 @@ import {
   insertTransaction,
   updateTransaction,
 } from "@/src/db/transactions";
+import {
+  CategoryOptions,
+  type TransactionCategory,
+} from "@/src/domain/categories";
 import DateTimePicker, {
   DateTimePickerEvent,
 } from "@react-native-community/datetimepicker";
@@ -67,13 +71,6 @@ function parseMoneyToCents(text: string) {
   return Number.isFinite(n) ? Math.round(n * 100) : 0;
 }
 
-const CATEGORIES = [
-  { key: "fuel", label: "Combustível" },
-  { key: "food", label: "Alimentação" },
-  { key: "maintenance", label: "Manutenção" },
-  { key: "other", label: "Outros" },
-] as const;
-
 export default function NewEntry() {
   const router = useRouter();
   const db = useSQLiteContext();
@@ -91,7 +88,7 @@ export default function NewEntry() {
   const [amount, setAmount] = useState("");
   const [title, setTitle] = useState("");
   const [notes, setNotes] = useState("");
-  const [category, setCategory] = useState<string | null>(null);
+  const [category, setCategory] = useState<TransactionCategory | null>(null);
   const [km, setKm] = useState(""); // string porque vem do TextInput
 
   const [selectedDate, setSelectedDate] = useState(new Date()); // Data atual
@@ -160,7 +157,7 @@ export default function NewEntry() {
     if (!amount.trim() || cents <= 0) {
       Alert.alert(
         "Erro",
-        "Por favor, insira um valor válido (maior que zero)."
+        "Por favor, insira um valor válido (maior que zero).",
       );
       return;
     }
@@ -315,7 +312,7 @@ export default function NewEntry() {
                 </Text>
 
                 <View style={styles.chipsRow}>
-                  {CATEGORIES.map((c) => {
+                  {CategoryOptions.map((c) => {
                     const selected = category === c.key;
                     return (
                       <Pressable

@@ -1,114 +1,252 @@
-import { listTransactionsByMonth } from "@/src/db/transactions";
-import { Transaction, computeMonthStats } from "@/src/domain/transaction";
-import { formatBRL, formatDay, monthLabelPT } from "@/src/utils/format";
+import { listTransactionsByDateRange } from "@/src/db/transactions";
+import { CategoryOptions } from "@/src/domain/categories";
+import { Transaction, computePeriodStats } from "@/src/domain/transaction";
+import { MonthlyIncomeExpenseChart } from "@/src/ui/charts/MonthlyIncomeExpenseChart";
+import { WeeklyIncomeBarChart } from "@/src/ui/charts/WeeklyIncomeBarChart";
+import { getMonthRange, getWeekRangeMonday } from "@/src/utils/date";
+import {
+  formatBRL,
+  formatDay,
+  formatSignedBRL,
+  monthLabelPT,
+  toISODate,
+} from "@/src/utils/format";
 import { useFocusEffect, useRouter } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import {
+  CardsThreeIcon,
   CaretLeftIcon,
   CaretRightIcon,
-  ChartBarIcon,
-  FunnelIcon,
   GearSixIcon,
-  MagnifyingGlassIcon,
   MinusCircleIcon,
   PlusCircleIcon,
-  PlusIcon,
 } from "phosphor-react-native";
 import { useCallback, useMemo, useState } from "react";
-import {
-  FlatList,
-  Modal,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import {
   SafeAreaView,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
 
-// label de hora usando createdAt.
-// function formatTimeFromCreatedAt(ms: number) {
-//   return new Date(ms).toLocaleTimeString("pt-BR", {
-//     hour: "2-digit",
-//     minute: "2-digit",
-//   });
-// }
+type ViewMode = "month" | "week";
+type PeriodRange = { startISO: string; endISO: string };
 
-type TypeFilter = "all" | "income" | "expense";
+function parseISODate(iso: string) {
+  return new Date(`${iso}T00:00:00`);
+}
+
+function daysBetweenInclusive(startISO: string, endISO: string) {
+  const msDay = 24 * 60 * 60 * 1000;
+  const start = parseISODate(startISO).getTime();
+  const end = parseISODate(endISO).getTime();
+  const days = Math.floor((end - start) / msDay) + 1;
+  return Math.max(1, days);
+}
+
+function previousRangeForMode(
+  mode: ViewMode,
+  selectedYear: number,
+  selectedMonth: number,
+  currentWeekRange: PeriodRange,
+): PeriodRange {
+  if (mode === "month") {
+    const prevMonth = selectedMonth === 1 ? 12 : selectedMonth - 1;
+    const prevYear = selectedMonth === 1 ? selectedYear - 1 : selectedYear;
+    return getMonthRange(prevYear, prevMonth);
+  }
+
+  const weekDaysShown = daysBetweenInclusive(
+    currentWeekRange.startISO,
+    currentWeekRange.endISO,
+  );
+  const prevStart = parseISODate(currentWeekRange.startISO);
+  prevStart.setDate(prevStart.getDate() - 7);
+  const prevEnd = new Date(prevStart);
+  prevEnd.setDate(prevEnd.getDate() + (weekDaysShown - 1));
+
+  return { startISO: toISODate(prevStart), endISO: toISODate(prevEnd) };
+}
 
 export default function Index() {
   const router = useRouter();
-
-  const insets = useSafeAreaInsets();
-
   const db = useSQLiteContext();
-
-  const Separator = () => <View style={styles.separator} />;
-
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-
-  const monthStats = useMemo(
-    () => computeMonthStats(transactions),
-    [transactions]
-  );
-
-  const incomeCents = monthStats.incomeCents;
-  const expenseCents = monthStats.expenseCents;
-  const totalCents = incomeCents - expenseCents;
-
-  const [search, setSearch] = useState("");
-  const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
-  const [filterModalVisible, setFilterModalVisible] = useState(false);
-
-  // Lista filtrada com base em busca + tipo
-  const filteredTransactions = useMemo(() => {
-    const query = search.trim().toLowerCase();
-
-    return transactions.filter((t) => {
-      // Filtra por tipo (entradas/saídas)
-      if (typeFilter !== "all" && t.type !== typeFilter) {
-        return false;
-      }
-
-      // Se não tem busca, só o filtro de tipo vale
-      if (!query) return true;
-
-      // Busca em título + notas
-      const title = t.title.toLowerCase();
-      const notes = (t.notes ?? "").toLowerCase();
-
-      return title.includes(query) || notes.includes(query);
-    });
-  }, [transactions, search, typeFilter]);
-
-  const hasFilter = search.trim().length > 0 || typeFilter !== "all";
+  const insets = useSafeAreaInsets();
 
   const now = new Date();
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
+  const [viewMode, setViewMode] = useState<ViewMode>("month");
+
+  const [monthTransactions, setMonthTransactions] = useState<Transaction[]>([]);
+  const [monthPreviousTransactions, setMonthPreviousTransactions] = useState<
+    Transaction[]
+  >([]);
+
+  const [weekTransactions, setWeekTransactions] = useState<Transaction[]>([]);
+  const [weekPreviousTransactions, setWeekPreviousTransactions] = useState<
+    Transaction[]
+  >([]);
+
+  const activeTransactions =
+    viewMode === "month" ? monthTransactions : weekTransactions;
+
+  const activePreviousTransactions =
+    viewMode === "month" ? monthPreviousTransactions : weekPreviousTransactions;
+
+  const periodTransactions = activeTransactions;
+  const previousPeriodTransactions = activePreviousTransactions;
+
+  const monthLabel = monthLabelPT({
+    year: selectedYear,
+    month: selectedMonth,
+  });
+  const headerTitle = viewMode === "month" ? monthLabel : "Semana atual";
+
+  const todayKey = toISODate(new Date());
+
+  const currentWeekRange = useMemo(
+    () =>
+      getWeekRangeMonday(parseISODate(todayKey), {
+        clampEndToToday: true,
+      }),
+    [todayKey],
+  );
 
   const isCurrentMonth =
     selectedYear === now.getFullYear() && selectedMonth === now.getMonth() + 1;
 
-  const monthLabel = monthLabelPT(selectedMonth, selectedYear);
-
   const load = useCallback(async () => {
-    const items = await listTransactionsByMonth(
-      db,
+    const monthRange = getMonthRange(selectedYear, selectedMonth);
+    const monthPreviousRange = previousRangeForMode(
+      "month",
       selectedYear,
-      selectedMonth
+      selectedMonth,
+      currentWeekRange,
     );
-    setTransactions(items);
-  }, [db, selectedYear, selectedMonth]);
+
+    const weekRange = currentWeekRange;
+    const weekPreviousRange = previousRangeForMode(
+      "week",
+      selectedYear,
+      selectedMonth,
+      currentWeekRange,
+    );
+
+    const [monthItems, monthPreviousItems, weekItems, weekPreviousItems] =
+      await Promise.all([
+        listTransactionsByDateRange(db, monthRange.startISO, monthRange.endISO),
+        listTransactionsByDateRange(
+          db,
+          monthPreviousRange.startISO,
+          monthPreviousRange.endISO,
+        ),
+        listTransactionsByDateRange(db, weekRange.startISO, weekRange.endISO),
+        listTransactionsByDateRange(
+          db,
+          weekPreviousRange.startISO,
+          weekPreviousRange.endISO,
+        ),
+      ]);
+
+    setMonthTransactions(monthItems);
+    setMonthPreviousTransactions(monthPreviousItems);
+
+    setWeekTransactions(weekItems);
+    setWeekPreviousTransactions(weekPreviousItems);
+  }, [db, selectedYear, selectedMonth, currentWeekRange]);
+
+  const previewTransactions = useMemo(
+    () => periodTransactions.slice(0, 5),
+    [periodTransactions],
+  );
 
   useFocusEffect(
     useCallback(() => {
       load();
-    }, [load])
+    }, [load]),
   );
+
+  const currentStats = useMemo(
+    () => computePeriodStats(periodTransactions),
+    [periodTransactions],
+  );
+  const previousStats = useMemo(
+    () => computePeriodStats(previousPeriodTransactions),
+    [previousPeriodTransactions],
+  );
+
+  const incomeCents = currentStats.incomeCents;
+  const expenseCents = currentStats.expenseCents;
+  const totalCents = currentStats.netCents;
+  const netDiffCents = currentStats.netCents - previousStats.netCents;
+
+  const projection = useMemo(() => {
+    const currentDate = new Date();
+    const totalDaysInPeriod =
+      viewMode === "month"
+        ? new Date(selectedYear, selectedMonth, 0).getDate()
+        : 7;
+
+    const elapsedDays =
+      viewMode === "month"
+        ? (() => {
+            const daysInMonth = new Date(
+              selectedYear,
+              selectedMonth,
+              0,
+            ).getDate();
+            const isSelectedCurrentMonth =
+              currentDate.getFullYear() === selectedYear &&
+              currentDate.getMonth() + 1 === selectedMonth;
+            const currentDay = isSelectedCurrentMonth
+              ? currentDate.getDate()
+              : daysInMonth;
+            return Math.max(1, Math.min(currentDay, daysInMonth));
+          })()
+        : daysBetweenInclusive(
+            currentWeekRange.startISO,
+            currentWeekRange.endISO,
+          );
+
+    const avgIncomePerDayCents = currentStats.incomeCents / elapsedDays;
+    const avgExpensePerDayCents = currentStats.expenseCents / elapsedDays;
+    const avgNetPerDayCents = currentStats.netCents / elapsedDays;
+
+    return {
+      projectedIncomeCents: Math.round(
+        avgIncomePerDayCents * totalDaysInPeriod,
+      ),
+      projectedExpenseCents: Math.round(
+        avgExpensePerDayCents * totalDaysInPeriod,
+      ),
+      projectedNetCents: Math.round(avgNetPerDayCents * totalDaysInPeriod),
+      label: viewMode === "month" ? "Projeção do mês" : "Projeção da semana",
+    };
+  }, [
+    currentStats,
+    viewMode,
+    selectedYear,
+    selectedMonth,
+    currentWeekRange.startISO,
+    currentWeekRange.endISO,
+  ]);
+
+  const categoryTotals = useMemo(() => {
+    const rows = [
+      ...CategoryOptions.map((c) => ({
+        key: c.key,
+        label: c.label,
+        value: currentStats.expenseByCategoryCents[c.key],
+      })),
+      {
+        key: "uncategorized",
+        label: "Sem categoria",
+        value: currentStats.uncategorizedCents,
+      },
+    ];
+
+    return rows.sort((a, b) => b.value - a.value).slice(0, 4);
+  }, [currentStats]);
 
   function handleMonthChange(delta: number) {
     let newMonth = selectedMonth + delta;
@@ -125,6 +263,8 @@ export default function Index() {
     setSelectedMonth(newMonth);
     setSelectedYear(newYear);
   }
+
+  const Separator = () => <View style={styles.separator} />;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -143,71 +283,81 @@ export default function Index() {
               color="rgba(255,255,255,0.8)"
             />
           </Pressable>
+
           <View style={styles.monthRow}>
             <Pressable
               onPress={() => handleMonthChange(-1)}
               style={styles.monthButton}
+              disabled={viewMode === "week"}
             >
-              <CaretLeftIcon weight="duotone" color="rgba(255,255,255,0.70)" />
+              <CaretLeftIcon
+                weight="duotone"
+                color="rgba(255,255,255,0.70)"
+                style={viewMode === "week" ? { opacity: 0.3 } : undefined}
+              />
             </Pressable>
 
-            <View style={styles.stats}>
-              {/* <ChartBarIcon
-              size={20}
-              weight="duotone"
-              color="rgba(255,255,255,0.70)"
-            /> */}
-
-              <Text style={styles.monthTitle}>{monthLabel}</Text>
-            </View>
+            <Text style={styles.monthTitle}>{headerTitle}</Text>
 
             <Pressable
               onPress={() => handleMonthChange(1)}
               style={styles.monthButton}
-              disabled={isCurrentMonth}
+              disabled={viewMode === "week" || isCurrentMonth}
             >
               <CaretRightIcon
                 weight="duotone"
                 color="rgba(255,255,255,0.70)"
-                style={isCurrentMonth ? { opacity: 0.3 } : undefined}
+                style={
+                  viewMode === "week" || isCurrentMonth
+                    ? { opacity: 0.3 }
+                    : undefined
+                }
               />
             </Pressable>
           </View>
-          {/* “fantasma” à direita para manter o monthRow realmente centralizado */}
+
           <View style={styles.headerRightSpacer} />
         </View>
 
-        <View
-          style={{
-            alignItems: "flex-end",
-            flexDirection: "row",
-            justifyContent: "space-between",
-          }}
-        >
-          <Text style={styles.summaryTitle}>Resumo do mês</Text>
+        <View style={styles.summaryHeaderRow}>
+          <Text style={styles.summaryTitle}>Dashboard</Text>
+          <View style={styles.viewModeRow}>
+            <Pressable
+              style={({ pressed }) => [
+                styles.viewModeChip,
+                viewMode === "month" && styles.viewModeChipSelected,
+                pressed && { opacity: 0.7, transform: [{ scale: 0.97 }] },
+              ]}
+              onPress={() => setViewMode("month")}
+            >
+              <Text
+                style={[
+                  styles.viewModeChipText,
+                  viewMode === "month" && styles.viewModeChipTextSelected,
+                ]}
+              >
+                Mensal
+              </Text>
+            </Pressable>
 
-          <Pressable
-            style={({ pressed }) => [
-              styles.statsButton,
-              pressed && { opacity: 0.8, transform: [{ scale: 0.97 }] },
-            ]}
-            onPress={() =>
-              router.push({
-                pathname: "/stats",
-                params: {
-                  year: String(selectedYear),
-                  month: String(selectedMonth),
-                },
-              })
-            }
-          >
-            <ChartBarIcon
-              size={18}
-              weight="duotone"
-              color="rgba(255,255,255,0.90)"
-            />
-            <Text style={styles.statsButtonText}>Ver detalhes</Text>
-          </Pressable>
+            <Pressable
+              style={({ pressed }) => [
+                styles.viewModeChip,
+                viewMode === "week" && styles.viewModeChipSelected,
+                pressed && { opacity: 0.7, transform: [{ scale: 0.97 }] },
+              ]}
+              onPress={() => setViewMode("week")}
+            >
+              <Text
+                style={[
+                  styles.viewModeChipText,
+                  viewMode === "week" && styles.viewModeChipTextSelected,
+                ]}
+              >
+                Semanal
+              </Text>
+            </Pressable>
+          </View>
         </View>
 
         <View style={styles.summaryRow}>
@@ -228,214 +378,218 @@ export default function Index() {
           <View style={styles.summaryCard}>
             <Text style={styles.summaryLabel}>Saldo</Text>
             <Text style={styles.summaryNumber} numberOfLines={1}>
-              R$ {formatBRL(totalCents)}
+              R$ {formatSignedBRL(totalCents)}
             </Text>
-          </View>
-        </View>
-
-        {/* <View style={{ flexDirection: "row", gap: 10, marginTop: 16 }}>
-          <Pressable
-            style={{
-              flex: 1,
-              paddingVertical: 10,
-              borderRadius: 8,
-              borderWidth: 1,
-              borderColor: "rgba(255,255,255,0.14)",
-              backgroundColor: "rgba(255,255,255,0.06)",
-              alignItems: "center",
-            }}
-            onPress={() => exportBackup(db)}
-          >
-            <Text style={{ color: "rgba(255,255,255,0.90)" }}>
-              Exportar backup
-            </Text>
-          </Pressable>
-
-          <Pressable
-            style={{
-              flex: 1,
-              paddingVertical: 10,
-              borderRadius: 8,
-              borderWidth: 1,
-              borderColor: "rgba(255,255,255,0.14)",
-              backgroundColor: "rgba(255,255,255,0.06)",
-              alignItems: "center",
-            }}
-            onPress={() => importBackupFromFile(db)}
-          >
-            <Text style={{ color: "rgba(255,255,255,0.90)" }}>
-              Importar backup
-            </Text>
-          </Pressable>
-        </View> */}
-
-        <View style={styles.searchRow}>
-          <View style={styles.searchInputWrapper}>
-            <MagnifyingGlassIcon
-              size={20}
-              weight="duotone"
-              color="rgba(255,255,255,0.55)"
-            />
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Buscar por título ou descrição"
-              placeholderTextColor={"rgba(255,255,255,0.45)"}
-              value={search}
-              onChangeText={setSearch}
-            />
-            <Pressable
-              style={({ pressed }) => [
-                styles.filterButton,
-                pressed && { opacity: 0.6, transform: [{ scale: 0.97 }] },
-                hasFilter && { backgroundColor: "rgba(255,179,90,0.22)" },
-              ]}
-              onPress={() => setFilterModalVisible(true)}
-            >
-              <FunnelIcon
-                size={20}
-                weight="duotone"
-                color="rgba(255,255,255,0.85)"
-              />
-            </Pressable>
           </View>
         </View>
       </View>
-
-      <FlatList
-        data={filteredTransactions}
-        keyExtractor={(item) => String(item.id)}
+      <ScrollView
         contentContainerStyle={[
-          styles.transactionList,
-          { paddingBottom: 120 + insets.bottom },
+          styles.scrollContent,
+          { paddingBottom: 24 + insets.bottom },
         ]}
-        renderItem={({ item }) => (
-          <Pressable
-            onPress={() =>
-              router.push({
-                pathname: "/transaction/[id]",
-                params: { id: String(item.id) },
-              })
-            }
-          >
-            <View style={styles.transactionItemList}>
-              {item.type === "expense" ? (
-                <MinusCircleIcon size={24} weight="duotone" color="#ff3b30" />
-              ) : (
-                <PlusCircleIcon size={24} weight="duotone" color="#28a745" />
-              )}
+      >
+        <View style={{ paddingHorizontal: 20 }}>
+          <View style={styles.chartSection}>
+            <Text style={styles.chartSectionTitle}>
+              {viewMode === "month" ? "Entradas x Saídas" : "Ganhos por dia"}
+            </Text>
 
-              <View style={styles.dayCol}>
-                <Text style={styles.dayText}>Dia</Text>
-                <Text style={styles.dayNumber}>{formatDay(item.dateISO)}</Text>
+            <View style={styles.chartViewport}>
+              <View
+                pointerEvents={viewMode === "month" ? "auto" : "none"}
+                style={[
+                  styles.chartLayer,
+                  viewMode !== "month" && styles.chartLayerHidden,
+                ]}
+              >
+                <MonthlyIncomeExpenseChart
+                  year={selectedYear}
+                  month={selectedMonth}
+                  currentTransactions={monthTransactions}
+                  previousTransactions={monthPreviousTransactions}
+                />
               </View>
 
-              <View style={styles.transactionContent}>
-                <View style={styles.transactionHeader}>
-                  <Text style={styles.titleText} numberOfLines={1}>
-                    {item.title}
-                  </Text>
-
-                  <Text
-                    style={[
-                      styles.amountText,
-                      item.type === "income"
-                        ? styles.ammountIncome
-                        : styles.amountExpense,
-                    ]}
-                  >
-                    {item.type === "income" ? "+" : "-"}
-                    R$ {formatBRL(item.amountCents)}
-                  </Text>
-                </View>
+              <View
+                pointerEvents={viewMode === "week" ? "auto" : "none"}
+                style={[
+                  styles.chartLayer,
+                  viewMode !== "week" && styles.chartLayerHidden,
+                ]}
+              >
+                <WeeklyIncomeBarChart transactions={weekTransactions} />
               </View>
             </View>
-          </Pressable>
-        )}
-        ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyTitle}>
-              {hasFilter
-                ? "Nenhum lançamento encontrado"
-                : "Sem lançamentos neste mês"}
-            </Text>
-            <Text style={styles.emptySubtitle}>
-              {hasFilter
-                ? "Tente ajustar a busca ou limpar os filtros."
-                : "Toque no botão + para registrar a sua primeira entrada ou saída."}
-            </Text>
           </View>
-        }
-        ItemSeparatorComponent={Separator}
-      />
-      <Pressable
-        style={({ pressed }) => [
-          styles.add,
-          { bottom: 30 + insets.bottom },
-          pressed && { opacity: 0.6, transform: [{ scale: 0.97 }] },
-        ]}
-        onPress={() => router.push("/newEntry")}
-      >
-        <PlusIcon size={28} weight="bold" color="#fff" />
-      </Pressable>
-      <Modal
-        visible={filterModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setFilterModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <Pressable
-            style={styles.modalBackdrop}
-            onPress={() => setFilterModalVisible(false)}
-          />
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Filtros</Text>
 
-            <Text style={styles.modalLabel}>Tipo</Text>
-            <View style={styles.chipsRow}>
-              {(["all", "income", "expense"] as TypeFilter[]).map((t) => {
-                const selected = typeFilter === t;
-                const label =
-                  t === "all"
-                    ? "Todos"
-                    : t === "income"
-                    ? "Entradas"
-                    : "Saídas";
-                return (
-                  <Pressable
-                    key={t}
-                    onPress={() => setTypeFilter(t)}
-                    style={({ pressed }) => [
-                      styles.chip,
-                      selected && styles.chipSelected,
-                      pressed && { opacity: 0.6, transform: [{ scale: 0.97 }] },
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.chipText,
-                        selected && styles.chipTextSelected,
-                      ]}
-                    >
-                      {label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
+          <View style={styles.infoGrid}>
+            <View style={styles.infoCard}>
+              <Text style={styles.infoLabel}>Saldo anterior</Text>
+              <Text style={styles.infoValue}>
+                R$ {formatSignedBRL(previousStats.netCents)}
+              </Text>
             </View>
+
+            <View style={styles.infoCard}>
+              <Text style={styles.infoLabel}>Diferença vs anterior</Text>
+              <Text
+                style={[
+                  styles.infoValue,
+                  netDiffCents > 0
+                    ? styles.positive
+                    : netDiffCents < 0
+                      ? styles.negative
+                      : null,
+                ]}
+              >
+                {netDiffCents === 0
+                  ? "R$ 0,00"
+                  : `R$ ${formatSignedBRL(netDiffCents)}`}
+              </Text>
+            </View>
+
+            <View style={[styles.infoCard, styles.infoCardFull]}>
+              <Text style={styles.infoLabel}>{projection.label}</Text>
+              <Text style={styles.infoLine}>
+                Entradas:{" "}
+                <Text style={styles.infoValueInline}>
+                  R$ {formatBRL(projection.projectedIncomeCents)}
+                </Text>
+              </Text>
+              <Text style={styles.infoLine}>
+                Saídas:{" "}
+                <Text style={styles.infoValueInline}>
+                  R$ {formatBRL(projection.projectedExpenseCents)}
+                </Text>
+              </Text>
+              <Text style={styles.infoLine}>
+                Saldo:{" "}
+                <Text
+                  style={[
+                    styles.infoValueInline,
+                    projection.projectedNetCents > 0
+                      ? styles.positive
+                      : projection.projectedNetCents < 0
+                        ? styles.negative
+                        : null,
+                  ]}
+                >
+                  R$ {formatSignedBRL(projection.projectedNetCents)}
+                </Text>
+              </Text>
+            </View>
+
+            <View style={[styles.infoCard, styles.infoCardFull]}>
+              <Text style={styles.infoLabel}>Gasto por categoria (top 4)</Text>
+              {categoryTotals.every((c) => c.value === 0) ? (
+                <Text style={styles.emptySubtitle}>Sem gastos no período.</Text>
+              ) : (
+                categoryTotals.map((c) => (
+                  <View key={c.key} style={styles.categoryRow}>
+                    <Text style={styles.categoryLabel}>{c.label}</Text>
+                    <Text style={styles.categoryValue}>
+                      R$ {formatBRL(c.value)}
+                    </Text>
+                  </View>
+                ))
+              )}
+            </View>
+          </View>
+
+          <View style={styles.previewHeader}>
+            <Text style={styles.previewTitle}>Últimos lançamentos</Text>
             <Pressable
-              style={styles.clearButton}
-              onPress={() => {
-                setTypeFilter("all");
-                setSearch("");
-                setFilterModalVisible(false);
-              }}
+              style={({ pressed }) => [
+                styles.allButton,
+                pressed && { opacity: 0.7, transform: [{ scale: 0.97 }] },
+              ]}
+              onPress={() =>
+                router.push({
+                  pathname: "/transactions",
+                  params: {
+                    year: String(selectedYear),
+                    month: String(selectedMonth),
+                  },
+                })
+              }
             >
-              <Text style={styles.clearButtonText}>Limpar filtros</Text>
+              <CardsThreeIcon size={18} weight="bold" color="#1b7a33" />
+              <Text style={styles.allButtonText}>Ver todos</Text>
             </Pressable>
           </View>
+
+          {previewTransactions.length > 0 ? (
+            <View style={styles.transactionList}>
+              {previewTransactions.map((item, index) => (
+                <View key={item.id}>
+                  <Pressable
+                    onPress={() =>
+                      router.push({
+                        pathname: "/transaction/[id]",
+                        params: { id: String(item.id) },
+                      })
+                    }
+                  >
+                    <View style={styles.transactionItemList}>
+                      {item.type === "expense" ? (
+                        <MinusCircleIcon
+                          size={24}
+                          weight="duotone"
+                          color="#ff3b30"
+                        />
+                      ) : (
+                        <PlusCircleIcon
+                          size={24}
+                          weight="duotone"
+                          color="#28a745"
+                        />
+                      )}
+
+                      <View style={styles.dayCol}>
+                        <Text style={styles.dayText}>Dia</Text>
+                        <Text style={styles.dayNumber}>
+                          {formatDay(item.dateISO)}
+                        </Text>
+                      </View>
+
+                      <View style={styles.transactionContent}>
+                        <View style={styles.transactionHeader}>
+                          <Text style={styles.titleText} numberOfLines={1}>
+                            {item.title}
+                          </Text>
+
+                          <Text
+                            style={[
+                              styles.amountText,
+                              item.type === "income"
+                                ? styles.amountIncome
+                                : styles.amountExpense,
+                            ]}
+                          >
+                            {item.type === "income" ? "+" : "-"}
+                            R$ {formatBRL(item.amountCents)}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                  </Pressable>
+
+                  {index < previewTransactions.length - 1 ? (
+                    <Separator />
+                  ) : null}
+                </View>
+              ))}
+            </View>
+          ) : (
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyTitle}>
+                Sem lançamentos neste período
+              </Text>
+            </View>
+          )}
         </View>
-      </Modal>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -452,13 +606,11 @@ export const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 10,
   },
   settingsButton: {
     padding: 8,
   },
   headerRightSpacer: {
-    // Tamanho aproximado do botão de configurações, pra balancear a linha
     width: 38,
   },
   monthRow: {
@@ -477,17 +629,46 @@ export const styles = StyleSheet.create({
     textTransform: "capitalize",
     color: "rgba(255,255,255,0.70)",
   },
+  summaryHeaderRow: {
+    alignItems: "flex-end",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 20,
+  },
   summaryTitle: {
     fontSize: 18,
     fontWeight: "bold",
-    marginTop: 6,
-    marginBottom: 6,
-    color: "rgba(255,255,255,0.70)",
+    color: "rgba(255,255,255,0.85)",
+  },
+  viewModeRow: {
+    flexDirection: "row",
+    alignSelf: "center",
+    gap: 8,
+  },
+  viewModeChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
+    backgroundColor: "rgba(255,255,255,0.04)",
+  },
+  viewModeChipSelected: {
+    borderColor: "#FFB35A",
+    backgroundColor: "rgba(255,179,90,0.18)",
+  },
+  viewModeChipText: {
+    fontSize: 13,
+    color: "rgba(255,255,255,0.75)",
+  },
+  viewModeChipTextSelected: {
+    fontWeight: "700",
+    color: "rgba(255,255,255,0.95)",
   },
   summaryRow: {
     flexDirection: "row",
     gap: 10,
-    marginTop: 10,
+    marginTop: 12,
     marginBottom: 10,
   },
   summaryCard: {
@@ -506,83 +687,127 @@ export const styles = StyleSheet.create({
     color: "rgba(255,255,255,0.70)",
   },
   summaryNumber: {
-    fontSize: 14, //Original 16, mas 14 pra caber
+    fontSize: 14,
     fontWeight: "600",
+    color: "rgba(255,255,255,0.90)",
+  },
+  chartSection: {
+    marginTop: 16,
+  },
+  chartSectionTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "rgba(255,255,255,0.92)",
+    marginBottom: 10,
+  },
+  chartViewport: {
+    height: 320,
+    position: "relative",
+  },
+  chartLayer: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+  },
+  chartLayerHidden: {
+    opacity: 0,
+  },
+  infoGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    marginTop: 4,
+  },
+  infoCard: {
+    flexBasis: "48%",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.14)",
+    borderRadius: 12,
+    padding: 12,
+    backgroundColor: "rgba(255,255,255,0.04)",
+  },
+  infoCardFull: {
+    flexBasis: "100%",
+  },
+  infoLabel: {
+    fontSize: 12,
+    marginBottom: 6,
     color: "rgba(255,255,255,0.70)",
   },
-  statsButton: {
-    marginTop: 18,
-    alignSelf: "flex-start",
+  infoValue: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "rgba(255,255,255,0.95)",
+  },
+  infoLine: {
+    fontSize: 13,
+    marginTop: 2,
+    color: "rgba(255,255,255,0.85)",
+  },
+  infoValueInline: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "rgba(255,255,255,0.95)",
+  },
+  positive: {
+    color: "#28a745",
+  },
+  negative: {
+    color: "#ff3b30",
+  },
+  categoryRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingVertical: 2,
+    gap: 10,
+  },
+  categoryLabel: {
+    fontSize: 13,
+    color: "rgba(255,255,255,0.90)",
+  },
+  categoryValue: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "rgba(255,255,255,0.95)",
+  },
+  previewHeader: {
+    marginTop: 14,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  previewTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "rgba(255,255,255,0.88)",
+  },
+  allButton: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
     paddingVertical: 8,
-    borderRadius: 999,
-    backgroundColor: "rgba(255,255,255,0.08)",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.18)",
+    borderRadius: 10,
+    borderColor: "rgba(255,255,255,0.22)",
+    backgroundColor: "rgba(255,255,255,0.16)",
   },
-  statsButtonText: {
+  allButtonText: {
     color: "rgba(255,255,255,0.95)",
-    fontSize: 14,
-    fontWeight: "600",
+    fontSize: 13,
+    fontWeight: "700",
   },
-  searchRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginTop: 6,
-    gap: 10,
-  },
-  searchInputWrapper: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.14)",
-    borderRadius: 8,
-    backgroundColor: "rgba(255,255,255,0.06)",
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 14,
-    color: "rgba(255,255,255,0.95)",
-  },
-  filterButton: {
-    padding: 8,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.18)",
-    backgroundColor: "rgba(255,255,255,0.05)",
+  scrollContent: {
+    flexGrow: 1,
   },
   transactionList: {
+    marginTop: 10,
     paddingBottom: 20,
   },
   transactionItemList: {
     padding: 15,
     backgroundColor: "rgba(255,255,255,0.06)",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  add: {
-    position: "absolute",
-    bottom: 30,
-    right: 30,
-    backgroundColor: "rgba(255,255,255,0.15)",
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    justifyContent: "center",
-    alignItems: "center",
-    elevation: 4, //Android
-    shadowOpacity: 0.2, //IOS
-    shadowOffset: { width: 0, height: 3 }, //IOS
-  },
-  stats: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
@@ -599,12 +824,6 @@ export const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "700",
     color: "rgba(255,255,255,0.95)",
-  },
-  rightCol: {
-    alignItems: "flex-end",
-    justifyContent: "center",
-    gap: 6,
-    marginLeft: 10,
   },
   transactionContent: {
     flex: 1,
@@ -623,7 +842,7 @@ export const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "700",
   },
-  ammountIncome: {
+  amountIncome: {
     color: "#28a745",
   },
   amountExpense: {
@@ -631,7 +850,7 @@ export const styles = StyleSheet.create({
   },
   emptyContainer: {
     paddingHorizontal: 24,
-    paddingVertical: 32,
+    paddingVertical: 24,
     alignItems: "center",
   },
   emptyTitle: {
@@ -651,67 +870,5 @@ export const styles = StyleSheet.create({
     marginLeft: 25,
     marginRight: 25,
     opacity: 0.7,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.45)",
-    justifyContent: "flex-end",
-  },
-  modalBackdrop: {
-    flex: 1,
-  },
-  modalCard: {
-    backgroundColor: "rgba(10,10,26,0.98)",
-    padding: 16,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.16)",
-  },
-  modalTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "rgba(255,255,255,0.95)",
-    marginBottom: 10,
-  },
-  modalLabel: {
-    fontSize: 13,
-    marginBottom: 6,
-    color: "rgba(255,255,255,0.75)",
-  },
-  chipsRow: {
-    flexDirection: "row",
-    gap: 8,
-    marginBottom: 12,
-  },
-  chip: {
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.20)",
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: "rgba(255,255,255,0.04)",
-  },
-  chipSelected: {
-    borderColor: "#FFB35A",
-    backgroundColor: "rgba(255,179,90,0.18)",
-  },
-  chipText: {
-    fontSize: 13,
-    color: "rgba(255,255,255,0.80)",
-  },
-  chipTextSelected: {
-    fontWeight: "700",
-    color: "rgba(255,255,255,0.95)",
-  },
-  clearButton: {
-    alignSelf: "flex-start",
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-  },
-  clearButtonText: {
-    fontSize: 13,
-    color: "#FFB35A",
-    fontWeight: "600",
   },
 });

@@ -1,54 +1,42 @@
 import type { SQLiteDatabase } from "expo-sqlite";
-import { Transaction } from "../domain/transaction.js";
+import { Transaction } from "../domain/transaction";
 
 export type NewTransactionInput = Omit<
   Transaction,
   "id" | "createdAt" | "updatedAt" | "deletedAt"
 >;
 
-function pad2(n: number) {
-  return String(n).padStart(2, "0");
-}
-
 // Lista todas as transações do banco de dados não apagadas
 export async function listTransactions(
-  db: SQLiteDatabase
+  db: SQLiteDatabase,
 ): Promise<Transaction[]> {
   return await db.getAllAsync<Transaction>(
     `SELECT *
     FROM transactions
     WHERE deletedAt IS NULL
-    ORDER BY dateISO DESC, createdAt DESC;`
+    ORDER BY dateISO DESC, createdAt DESC;`,
   );
 }
 
-// Lista todas as transações de um mês específico não apagadas
-export async function listTransactionsByMonth(
+// Lista todas as transações de um período
+export async function listTransactionsByDateRange(
   db: SQLiteDatabase,
-  year: number,
-  month1to12: number
+  startISO: string,
+  endISO: string,
 ): Promise<Transaction[]> {
-  const start = `${year}-${pad2(month1to12)}-01`;
-
-  const endYear = month1to12 === 12 ? year + 1 : year;
-  const endMonth = month1to12 === 12 ? 1 : month1to12 + 1;
-  const end = `${endYear}-${pad2(endMonth)}-01`;
-
-  return await db.getAllAsync<Transaction>(
-    `SELECT *
+  const query = `SELECT *
     FROM transactions
-    WHERE dateISO >= ?
-    AND dateISO < ?
-    AND deletedAt IS NULL
-    ORDER BY dateISO DESC, createdAt DESC;`,
-    [start, end]
-  );
+    WHERE deletedAt IS NULL
+    AND dateISO >= ?
+    AND dateISO <= ?
+    ORDER BY dateISO DESC, createdAt DESC;`;
+  return await db.getAllAsync<Transaction>(query, [startISO, endISO]);
 }
 
 // Adiciona uma nova transação ao banco de dados
 export async function insertTransaction(
   db: SQLiteDatabase,
-  input: NewTransactionInput
+  input: NewTransactionInput,
 ) {
   const createdAt = Date.now();
   const updatedAt = createdAt;
@@ -79,20 +67,20 @@ export async function insertTransaction(
       input.notes ?? null,
       input.category,
       input.distanceMeters,
-    ]
+    ],
   );
 }
 
 export async function getTransactionById(
   db: SQLiteDatabase,
-  id: number
+  id: number,
 ): Promise<Transaction | null> {
   const transaction = await db.getFirstAsync<Transaction>(
     `SELECT *
     FROM transactions
     WHERE id = ?
-    AND deletedAT IS NULL`,
-    [id]
+    AND deletedAt IS NULL`,
+    [id],
   );
   return transaction || null;
 }
@@ -104,7 +92,7 @@ export async function deleteTransaction(db: SQLiteDatabase, id: number) {
     `UPDATE transactions
     SET deletedAt = ?, updatedAt = ?
     WHERE id = ?;`,
-    [now, now, id]
+    [now, now, id],
   );
 }
 
@@ -112,7 +100,7 @@ export async function deleteTransaction(db: SQLiteDatabase, id: number) {
 export async function updateTransaction(
   db: SQLiteDatabase,
   id: number,
-  input: NewTransactionInput
+  input: NewTransactionInput,
 ) {
   const updatedAt = Date.now();
   await db.runAsync(
@@ -136,6 +124,6 @@ export async function updateTransaction(
       input.distanceMeters,
       updatedAt,
       id,
-    ]
+    ],
   );
 }
