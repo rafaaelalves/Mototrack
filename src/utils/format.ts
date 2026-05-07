@@ -45,3 +45,8 @@ export function toISODate(d: Date) {
   const dd = String(d.getDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
 }
+
+export function formatSignedBRL(cents: number) {
+  const sign = cents < 0 ? "-" : "";
+  return `${sign}${formatBRL(Math.abs(cents))}`;
+}
