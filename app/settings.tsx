@@ -1,4 +1,5 @@
 // app/settings.tsx
+import { exportBackup, importBackupFromFile } from "@/src/services/backupFile";
 import { useRouter } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import { GearSix, X } from "phosphor-react-native";
@@ -7,7 +8,6 @@ import {
   SafeAreaView,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
-import { exportBackup, importBackupFromFile } from "../src/services/backupFile";
 
 export default function Settings() {
   const db = useSQLiteContext();

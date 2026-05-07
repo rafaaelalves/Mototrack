@@ -38,3 +38,15 @@ export function formatDateBR(iso: string) {
   if (!y || !m || !d) return iso;
   return `${d}/${m}/${y}`;
 }
+
+export function toISODate(d: Date) {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+export function formatSignedBRL(cents: number) {
+  const sign = cents < 0 ? "-" : "";
+  return `${sign}${formatBRL(Math.abs(cents))}`;
+}

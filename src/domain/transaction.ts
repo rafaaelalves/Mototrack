@@ -1,10 +1,6 @@
+import { CategoryOptions, type TransactionCategory } from "./categories";
+
 export type TransactionType = "income" | "expense";
-export type TransactionCategory =
-  | "fuel"
-  | "food"
-  | "maintenance"
-  | "other"
-  | null;
 
 export type Transaction = {
   id: number;
@@ -16,34 +12,33 @@ export type Transaction = {
   updatedAt: number;
   deletedAt: number | null;
   notes: string | null;
-  category: string | null;
+  category: TransactionCategory | null;
   distanceMeters: number | null;
 };
 
-export type MonthStats = {
+export type PeriodStats = {
   incomeCents: number;
   expenseCents: number;
   netCents: number;
-  fuelCents: number;
-  foodCents: number;
-  maintenanceCents: number;
-  vehicleCents: number;
-  otherCents: number;
+  expenseByCategoryCents: Record<TransactionCategory, number>;
   uncategorizedCents: number;
   km: number;
   netPerKm: number | null; //Lucro/Km
   costPerKm: number | null; //Custo/Km
 };
 
-export function computeMonthStats(transactions: Transaction[]): MonthStats {
+function categoryMap(): Record<TransactionCategory, number> {
+  return Object.fromEntries(CategoryOptions.map((c) => [c.key, 0])) as Record<
+    TransactionCategory,
+    number
+  >;
+}
+
+export function computePeriodStats(transactions: Transaction[]): PeriodStats {
   let incomeCents = 0;
   let expenseCents = 0;
-  let fuelCents = 0;
-  let foodCents = 0;
   let kmMeters = 0;
-  let maintenanceCents = 0;
-  let vehicleCents = 0;
-  let otherCents = 0;
+  const expenseByCategoryCents = categoryMap();
   let uncategorizedCents = 0;
 
   for (const t of transactions) {
@@ -53,30 +48,21 @@ export function computeMonthStats(transactions: Transaction[]): MonthStats {
       if (typeof t.distanceMeters === "number" && t.distanceMeters > 0) {
         kmMeters += t.distanceMeters;
       }
-    } else {
-      expenseCents += t.amountCents;
+      continue;
+    }
+    //expense
+    expenseCents += t.amountCents;
 
-      switch (t.category) {
-        case "fuel":
-          fuelCents += t.amountCents;
-          break;
-        case "food":
-          foodCents += t.amountCents;
-          break;
-        case "maintenance":
-          maintenanceCents += t.amountCents;
-          break;
-        case "vehicle":
-          vehicleCents += t.amountCents;
-          break;
-        case "other":
-          otherCents += t.amountCents;
-          break;
-        default:
-          // null, undefined ou qualquer outra string inesperada
-          uncategorizedCents += t.amountCents;
-          break;
-      }
+    const cat = t.category;
+
+    // Se a categoria for nula ou não estiver presente no mapa, contabiliza como "uncategorized"
+    if (
+      cat &&
+      Object.prototype.hasOwnProperty.call(expenseByCategoryCents, cat)
+    ) {
+      expenseByCategoryCents[cat] += t.amountCents;
+    } else {
+      uncategorizedCents += t.amountCents;
     }
   }
 
@@ -90,11 +76,7 @@ export function computeMonthStats(transactions: Transaction[]): MonthStats {
     incomeCents,
     expenseCents,
     netCents,
-    fuelCents,
-    foodCents,
-    maintenanceCents,
-    vehicleCents,
-    otherCents,
+    expenseByCategoryCents,
     uncategorizedCents,
     km,
     netPerKm,

@@ -1,5 +1,5 @@
+import type { Transaction } from "@/src/domain/transaction";
 import type { SQLiteDatabase } from "expo-sqlite";
-import type { Transaction } from "./transactions";
 
 export type BackupFile = {
   version: 1;
@@ -12,7 +12,7 @@ export async function buildBackup(db: SQLiteDatabase): Promise<BackupFile> {
   const rows = await db.getAllAsync<Transaction>(
     `SELECT *
       FROM transactions
-      ORDER BY dateISO DESC, createdAt DESC;`
+      ORDER BY dateISO DESC, createdAt DESC;`,
   );
 
   return {
@@ -24,7 +24,7 @@ export async function buildBackup(db: SQLiteDatabase): Promise<BackupFile> {
 
 export async function applyBackup(
   db: SQLiteDatabase,
-  data: BackupFile
+  data: BackupFile,
 ): Promise<void> {
   if (data.version !== 1) {
     throw new Error("Versão de backup não suportada.");
