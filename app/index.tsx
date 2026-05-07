@@ -2,10 +2,12 @@ import { listTransactionsByDateRange } from "@/src/db/transactions";
 import { CategoryOptions } from "@/src/domain/categories";
 import { Transaction, computePeriodStats } from "@/src/domain/transaction";
 import { MonthlyIncomeExpenseChart } from "@/src/ui/charts/MonthlyIncomeExpenseChart";
+import { WeeklyIncomeBarChart } from "@/src/ui/charts/WeeklyIncomeBarChart";
 import { getMonthRange, getWeekRangeMonday } from "@/src/utils/date";
 import {
   formatBRL,
   formatDay,
+  formatSignedBRL,
   monthLabelPT,
   toISODate,
 } from "@/src/utils/format";
@@ -75,12 +77,24 @@ export default function Index() {
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
   const [viewMode, setViewMode] = useState<ViewMode>("month");
 
-  const [periodTransactions, setPeriodTransactions] = useState<Transaction[]>(
-    [],
-  );
-  const [previousPeriodTransactions, setPreviousPeriodTransactions] = useState<
+  const [monthTransactions, setMonthTransactions] = useState<Transaction[]>([]);
+  const [monthPreviousTransactions, setMonthPreviousTransactions] = useState<
     Transaction[]
   >([]);
+
+  const [weekTransactions, setWeekTransactions] = useState<Transaction[]>([]);
+  const [weekPreviousTransactions, setWeekPreviousTransactions] = useState<
+    Transaction[]
+  >([]);
+
+  const activeTransactions =
+    viewMode === "month" ? monthTransactions : weekTransactions;
+
+  const activePreviousTransactions =
+    viewMode === "month" ? monthPreviousTransactions : weekPreviousTransactions;
+
+  const periodTransactions = activeTransactions;
+  const previousPeriodTransactions = activePreviousTransactions;
 
   const monthLabel = monthLabelPT({
     year: selectedYear,
@@ -102,34 +116,44 @@ export default function Index() {
     selectedYear === now.getFullYear() && selectedMonth === now.getMonth() + 1;
 
   const load = useCallback(async () => {
-    const currentRange =
-      viewMode === "month"
-        ? getMonthRange(selectedYear, selectedMonth)
-        : currentWeekRange;
-
-    const previousRange = previousRangeForMode(
-      viewMode,
+    const monthRange = getMonthRange(selectedYear, selectedMonth);
+    const monthPreviousRange = previousRangeForMode(
+      "month",
       selectedYear,
       selectedMonth,
       currentWeekRange,
     );
 
-    const [currentItems, previousItems] = await Promise.all([
-      listTransactionsByDateRange(
-        db,
-        currentRange.startISO,
-        currentRange.endISO,
-      ),
-      listTransactionsByDateRange(
-        db,
-        previousRange.startISO,
-        previousRange.endISO,
-      ),
-    ]);
+    const weekRange = currentWeekRange;
+    const weekPreviousRange = previousRangeForMode(
+      "week",
+      selectedYear,
+      selectedMonth,
+      currentWeekRange,
+    );
 
-    setPeriodTransactions(currentItems);
-    setPreviousPeriodTransactions(previousItems);
-  }, [db, viewMode, selectedYear, selectedMonth, currentWeekRange]);
+    const [monthItems, monthPreviousItems, weekItems, weekPreviousItems] =
+      await Promise.all([
+        listTransactionsByDateRange(db, monthRange.startISO, monthRange.endISO),
+        listTransactionsByDateRange(
+          db,
+          monthPreviousRange.startISO,
+          monthPreviousRange.endISO,
+        ),
+        listTransactionsByDateRange(db, weekRange.startISO, weekRange.endISO),
+        listTransactionsByDateRange(
+          db,
+          weekPreviousRange.startISO,
+          weekPreviousRange.endISO,
+        ),
+      ]);
+
+    setMonthTransactions(monthItems);
+    setMonthPreviousTransactions(monthPreviousItems);
+
+    setWeekTransactions(weekItems);
+    setWeekPreviousTransactions(weekPreviousItems);
+  }, [db, selectedYear, selectedMonth, currentWeekRange]);
 
   const previewTransactions = useMemo(
     () => periodTransactions.slice(0, 5),
@@ -354,7 +378,7 @@ export default function Index() {
           <View style={styles.summaryCard}>
             <Text style={styles.summaryLabel}>Saldo</Text>
             <Text style={styles.summaryNumber} numberOfLines={1}>
-              R$ {formatBRL(totalCents)}
+              R$ {formatSignedBRL(totalCents)}
             </Text>
           </View>
         </View>
@@ -366,19 +390,44 @@ export default function Index() {
         ]}
       >
         <View style={{ paddingHorizontal: 20 }}>
-          {viewMode === "month" ? (
-            <MonthlyIncomeExpenseChart
-              year={selectedYear}
-              month={selectedMonth}
-              transactions={periodTransactions}
-            />
-          ) : null}
+          <View style={styles.chartSection}>
+            <Text style={styles.chartSectionTitle}>
+              {viewMode === "month" ? "Entradas x Saídas" : "Ganhos por dia"}
+            </Text>
+
+            <View style={styles.chartViewport}>
+              <View
+                pointerEvents={viewMode === "month" ? "auto" : "none"}
+                style={[
+                  styles.chartLayer,
+                  viewMode !== "month" && styles.chartLayerHidden,
+                ]}
+              >
+                <MonthlyIncomeExpenseChart
+                  year={selectedYear}
+                  month={selectedMonth}
+                  currentTransactions={monthTransactions}
+                  previousTransactions={monthPreviousTransactions}
+                />
+              </View>
+
+              <View
+                pointerEvents={viewMode === "week" ? "auto" : "none"}
+                style={[
+                  styles.chartLayer,
+                  viewMode !== "week" && styles.chartLayerHidden,
+                ]}
+              >
+                <WeeklyIncomeBarChart transactions={weekTransactions} />
+              </View>
+            </View>
+          </View>
 
           <View style={styles.infoGrid}>
             <View style={styles.infoCard}>
               <Text style={styles.infoLabel}>Saldo anterior</Text>
               <Text style={styles.infoValue}>
-                R$ {formatBRL(previousStats.netCents)}
+                R$ {formatSignedBRL(previousStats.netCents)}
               </Text>
             </View>
 
@@ -396,9 +445,7 @@ export default function Index() {
               >
                 {netDiffCents === 0
                   ? "R$ 0,00"
-                  : `${netDiffCents > 0 ? "+" : "-"}R$ ${formatBRL(
-                      Math.abs(netDiffCents),
-                    )}`}
+                  : `R$ ${formatSignedBRL(netDiffCents)}`}
               </Text>
             </View>
 
@@ -428,7 +475,7 @@ export default function Index() {
                         : null,
                   ]}
                 >
-                  R$ {formatBRL(projection.projectedNetCents)}
+                  R$ {formatSignedBRL(projection.projectedNetCents)}
                 </Text>
               </Text>
             </View>
@@ -643,6 +690,28 @@ export const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
     color: "rgba(255,255,255,0.90)",
+  },
+  chartSection: {
+    marginTop: 16,
+  },
+  chartSectionTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "rgba(255,255,255,0.92)",
+    marginBottom: 10,
+  },
+  chartViewport: {
+    height: 320,
+    position: "relative",
+  },
+  chartLayer: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+  },
+  chartLayerHidden: {
+    opacity: 0,
   },
   infoGrid: {
     flexDirection: "row",
