@@ -1,6 +1,10 @@
 import { listTransactionsByDateRange } from "@/src/db/transactions";
 import { CategoryOptions } from "@/src/domain/categories";
 import { Transaction, computePeriodStats } from "@/src/domain/transaction";
+import {
+  CategoryDonutChart,
+  getCategoryDonutColor,
+} from "@/src/ui/charts/CategoryDonutChart";
 import { MonthlyIncomeExpenseChart } from "@/src/ui/charts/MonthlyIncomeExpenseChart";
 import { WeeklyIncomeBarChart } from "@/src/ui/charts/WeeklyIncomeBarChart";
 import { getMonthRange, getWeekRangeMonday } from "@/src/utils/date";
@@ -28,7 +32,7 @@ import {
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
 
-type ViewMode = "month" | "week";
+type PeriodMode = "month" | "week";
 type PeriodRange = { startISO: string; endISO: string };
 
 function parseISODate(iso: string) {
@@ -44,7 +48,7 @@ function daysBetweenInclusive(startISO: string, endISO: string) {
 }
 
 function previousRangeForMode(
-  mode: ViewMode,
+  mode: PeriodMode,
   selectedYear: number,
   selectedMonth: number,
   currentWeekRange: PeriodRange,
@@ -67,6 +71,25 @@ function previousRangeForMode(
   return { startISO: toISODate(prevStart), endISO: toISODate(prevEnd) };
 }
 
+const WEEKDAY_LABELS = [
+  "Domingo",
+  "Segunda",
+  "Terça",
+  "Quarta",
+  "Quinta",
+  "Sexta",
+  "Sábado",
+];
+
+function getWeekdayLabelFromISO(dateISO: string) {
+  const date = parseISODate(dateISO);
+  return WEEKDAY_LABELS[date.getDay()];
+}
+
+function normalizeStoreName(title: string) {
+  return title.trim().replace(/\s+/g, " ");
+}
+
 export default function Index() {
   const router = useRouter();
   const db = useSQLiteContext();
@@ -75,7 +98,6 @@ export default function Index() {
   const now = new Date();
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
-  const [viewMode, setViewMode] = useState<ViewMode>("month");
 
   const [monthTransactions, setMonthTransactions] = useState<Transaction[]>([]);
   const [monthPreviousTransactions, setMonthPreviousTransactions] = useState<
@@ -87,20 +109,36 @@ export default function Index() {
     Transaction[]
   >([]);
 
-  const activeTransactions =
-    viewMode === "month" ? monthTransactions : weekTransactions;
+  const weekStats = useMemo(
+    () => computePeriodStats(weekTransactions),
+    [weekTransactions],
+  );
 
-  const activePreviousTransactions =
-    viewMode === "month" ? monthPreviousTransactions : weekPreviousTransactions;
+  const previousWeekStats = useMemo(
+    () => computePeriodStats(weekPreviousTransactions),
+    [weekPreviousTransactions],
+  );
 
-  const periodTransactions = activeTransactions;
-  const previousPeriodTransactions = activePreviousTransactions;
+  const monthStats = useMemo(
+    () => computePeriodStats(monthTransactions),
+    [monthTransactions],
+  );
+
+  const previousMonthStats = useMemo(
+    () => computePeriodStats(monthPreviousTransactions),
+    [monthPreviousTransactions],
+  );
+
+  const weekIncomeDiffCents =
+    weekStats.incomeCents - previousWeekStats.incomeCents;
+
+  const monthNetDiffCents = monthStats.netCents - previousMonthStats.netCents;
 
   const monthLabel = monthLabelPT({
     year: selectedYear,
     month: selectedMonth,
   });
-  const headerTitle = viewMode === "month" ? monthLabel : "Semana atual";
+  const headerTitle = monthLabel;
 
   const todayKey = toISODate(new Date());
 
@@ -156,8 +194,8 @@ export default function Index() {
   }, [db, selectedYear, selectedMonth, currentWeekRange]);
 
   const previewTransactions = useMemo(
-    () => periodTransactions.slice(0, 5),
-    [periodTransactions],
+    () => monthTransactions.slice(0, 5),
+    [monthTransactions],
   );
 
   useFocusEffect(
@@ -166,87 +204,114 @@ export default function Index() {
     }, [load]),
   );
 
-  const currentStats = useMemo(
-    () => computePeriodStats(periodTransactions),
-    [periodTransactions],
-  );
-  const previousStats = useMemo(
-    () => computePeriodStats(previousPeriodTransactions),
-    [previousPeriodTransactions],
-  );
-
-  const incomeCents = currentStats.incomeCents;
-  const expenseCents = currentStats.expenseCents;
-  const totalCents = currentStats.netCents;
-  const netDiffCents = currentStats.netCents - previousStats.netCents;
+  const incomeCents = monthStats.incomeCents;
+  const expenseCents = monthStats.expenseCents;
+  const totalCents = monthStats.netCents;
+  const netDiffCents = monthNetDiffCents;
 
   const projection = useMemo(() => {
     const currentDate = new Date();
-    const totalDaysInPeriod =
-      viewMode === "month"
-        ? new Date(selectedYear, selectedMonth, 0).getDate()
-        : 7;
+    const daysInMonth = new Date(selectedYear, selectedMonth, 0).getDate();
 
-    const elapsedDays =
-      viewMode === "month"
-        ? (() => {
-            const daysInMonth = new Date(
-              selectedYear,
-              selectedMonth,
-              0,
-            ).getDate();
-            const isSelectedCurrentMonth =
-              currentDate.getFullYear() === selectedYear &&
-              currentDate.getMonth() + 1 === selectedMonth;
-            const currentDay = isSelectedCurrentMonth
-              ? currentDate.getDate()
-              : daysInMonth;
-            return Math.max(1, Math.min(currentDay, daysInMonth));
-          })()
-        : daysBetweenInclusive(
-            currentWeekRange.startISO,
-            currentWeekRange.endISO,
-          );
+    const isSelectedCurrentMonth =
+      currentDate.getFullYear() === selectedYear &&
+      currentDate.getMonth() + 1 === selectedMonth;
 
-    const avgIncomePerDayCents = currentStats.incomeCents / elapsedDays;
-    const avgExpensePerDayCents = currentStats.expenseCents / elapsedDays;
-    const avgNetPerDayCents = currentStats.netCents / elapsedDays;
+    const elapsedDays = isSelectedCurrentMonth
+      ? currentDate.getDate()
+      : daysInMonth;
+
+    const safeElapsedDays = Math.max(1, Math.min(elapsedDays, daysInMonth));
+
+    const avgIncomePerDayCents = monthStats.incomeCents / safeElapsedDays;
+    const avgExpensePerDayCents = monthStats.expenseCents / safeElapsedDays;
+    const avgNetPerDayCents = monthStats.netCents / safeElapsedDays;
 
     return {
-      projectedIncomeCents: Math.round(
-        avgIncomePerDayCents * totalDaysInPeriod,
-      ),
-      projectedExpenseCents: Math.round(
-        avgExpensePerDayCents * totalDaysInPeriod,
-      ),
-      projectedNetCents: Math.round(avgNetPerDayCents * totalDaysInPeriod),
-      label: viewMode === "month" ? "Projeção do mês" : "Projeção da semana",
+      projectedIncomeCents: Math.round(avgIncomePerDayCents * daysInMonth),
+      projectedExpenseCents: Math.round(avgExpensePerDayCents * daysInMonth),
+      projectedNetCents: Math.round(avgNetPerDayCents * daysInMonth),
+      label: "Projeção do mês",
     };
-  }, [
-    currentStats,
-    viewMode,
-    selectedYear,
-    selectedMonth,
-    currentWeekRange.startISO,
-    currentWeekRange.endISO,
-  ]);
+  }, [monthStats, selectedYear, selectedMonth]);
 
   const categoryTotals = useMemo(() => {
     const rows = [
       ...CategoryOptions.map((c) => ({
         key: c.key,
         label: c.label,
-        value: currentStats.expenseByCategoryCents[c.key],
+        value: monthStats.expenseByCategoryCents[c.key],
       })),
       {
         key: "uncategorized",
         label: "Sem categoria",
-        value: currentStats.uncategorizedCents,
+        value: monthStats.uncategorizedCents,
       },
     ];
 
     return rows.sort((a, b) => b.value - a.value).slice(0, 4);
-  }, [currentStats]);
+  }, [monthStats]);
+
+  const topExpenseCategories = useMemo(
+    () => categoryTotals.filter((item) => item.value > 0).slice(0, 4),
+    [categoryTotals],
+  );
+
+  const incomeTransactions = useMemo(
+    () => monthTransactions.filter((item) => item.type === "income"),
+    [monthTransactions],
+  );
+
+  const bestWeekdayInsight = useMemo(() => {
+    const totalsByWeekday = new Map<string, number>();
+
+    for (const item of incomeTransactions) {
+      const weekday = getWeekdayLabelFromISO(item.dateISO);
+      const currentTotal = totalsByWeekday.get(weekday) ?? 0;
+
+      totalsByWeekday.set(weekday, currentTotal + item.amountCents);
+    }
+
+    const best = Array.from(totalsByWeekday.entries()).sort(
+      (a, b) => b[1] - a[1],
+    )[0];
+
+    if (!best) {
+      return null;
+    }
+
+    return {
+      label: best[0],
+      valueCents: best[1],
+    };
+  }, [incomeTransactions]);
+
+  const bestStoreInsight = useMemo(() => {
+    const totalsByStore = new Map<string, number>();
+
+    for (const item of incomeTransactions) {
+      const storeName = normalizeStoreName(item.title);
+
+      if (!storeName) continue;
+
+      const currentTotal = totalsByStore.get(storeName) ?? 0;
+
+      totalsByStore.set(storeName, currentTotal + item.amountCents);
+    }
+
+    const best = Array.from(totalsByStore.entries()).sort(
+      (a, b) => b[1] - a[1],
+    )[0];
+
+    if (!best) {
+      return null;
+    }
+
+    return {
+      label: best[0],
+      valueCents: best[1],
+    };
+  }, [incomeTransactions]);
 
   function handleMonthChange(delta: number) {
     let newMonth = selectedMonth + delta;
@@ -269,7 +334,12 @@ export default function Index() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <View style={styles.headerTopRow}>
+        <View style={styles.brandRow}>
+          <View>
+            <Text style={styles.brandText}>Mototrack</Text>
+            <Text style={styles.brandSubtitle}>Seu resumo financeiro</Text>
+          </View>
+
           <Pressable
             style={({ pressed }) => [
               styles.settingsButton,
@@ -278,109 +348,18 @@ export default function Index() {
             onPress={() => router.push("/settings")}
           >
             <GearSixIcon
-              size={24}
+              size={22}
               weight="duotone"
               color="rgba(255,255,255,0.8)"
             />
           </Pressable>
-
-          <View style={styles.monthRow}>
-            <Pressable
-              onPress={() => handleMonthChange(-1)}
-              style={styles.monthButton}
-              disabled={viewMode === "week"}
-            >
-              <CaretLeftIcon
-                weight="duotone"
-                color="rgba(255,255,255,0.70)"
-                style={viewMode === "week" ? { opacity: 0.3 } : undefined}
-              />
-            </Pressable>
-
-            <Text style={styles.monthTitle}>{headerTitle}</Text>
-
-            <Pressable
-              onPress={() => handleMonthChange(1)}
-              style={styles.monthButton}
-              disabled={viewMode === "week" || isCurrentMonth}
-            >
-              <CaretRightIcon
-                weight="duotone"
-                color="rgba(255,255,255,0.70)"
-                style={
-                  viewMode === "week" || isCurrentMonth
-                    ? { opacity: 0.3 }
-                    : undefined
-                }
-              />
-            </Pressable>
-          </View>
-
-          <View style={styles.headerRightSpacer} />
         </View>
 
-        <View style={styles.summaryHeaderRow}>
-          <Text style={styles.summaryTitle}>Dashboard</Text>
-          <View style={styles.viewModeRow}>
-            <Pressable
-              style={({ pressed }) => [
-                styles.viewModeChip,
-                viewMode === "month" && styles.viewModeChipSelected,
-                pressed && { opacity: 0.7, transform: [{ scale: 0.97 }] },
-              ]}
-              onPress={() => setViewMode("month")}
-            >
-              <Text
-                style={[
-                  styles.viewModeChipText,
-                  viewMode === "month" && styles.viewModeChipTextSelected,
-                ]}
-              >
-                Mensal
-              </Text>
-            </Pressable>
-
-            <Pressable
-              style={({ pressed }) => [
-                styles.viewModeChip,
-                viewMode === "week" && styles.viewModeChipSelected,
-                pressed && { opacity: 0.7, transform: [{ scale: 0.97 }] },
-              ]}
-              onPress={() => setViewMode("week")}
-            >
-              <Text
-                style={[
-                  styles.viewModeChipText,
-                  viewMode === "week" && styles.viewModeChipTextSelected,
-                ]}
-              >
-                Semanal
-              </Text>
-            </Pressable>
-          </View>
-        </View>
-
-        <View style={styles.summaryRow}>
-          <View style={styles.summaryCard}>
-            <Text style={styles.summaryLabel}>Entradas</Text>
-            <Text style={styles.summaryNumber} numberOfLines={1}>
-              R$ {formatBRL(incomeCents)}
-            </Text>
-          </View>
-
-          <View style={styles.summaryCard}>
-            <Text style={styles.summaryLabel}>Saídas</Text>
-            <Text style={styles.summaryNumber} numberOfLines={1}>
-              R$ {formatBRL(expenseCents)}
-            </Text>
-          </View>
-
-          <View style={styles.summaryCard}>
-            <Text style={styles.summaryLabel}>Saldo</Text>
-            <Text style={styles.summaryNumber} numberOfLines={1}>
-              R$ {formatSignedBRL(totalCents)}
-            </Text>
-          </View>
+        <View style={styles.heroTextBlock}>
+          <Text style={styles.heroTitle}>Dashboard</Text>
+          <Text style={styles.heroSubtitle}>
+            Acompanhe seus ganhos, gastos e evolução.
+          </Text>
         </View>
       </View>
       <ScrollView
@@ -390,110 +369,266 @@ export default function Index() {
         ]}
       >
         <View style={{ paddingHorizontal: 20 }}>
-          <View style={styles.chartSection}>
-            <Text style={styles.chartSectionTitle}>
-              {viewMode === "month" ? "Entradas x Saídas" : "Ganhos por dia"}
-            </Text>
+          <View style={styles.periodCard}>
+            <View style={styles.periodHeader}>
+              <Text style={styles.periodLabel}>Resumo mensal</Text>
 
-            <View style={styles.chartViewport}>
-              <View
-                pointerEvents={viewMode === "month" ? "auto" : "none"}
-                style={[
-                  styles.chartLayer,
-                  viewMode !== "month" && styles.chartLayerHidden,
-                ]}
-              >
-                <MonthlyIncomeExpenseChart
-                  year={selectedYear}
-                  month={selectedMonth}
-                  currentTransactions={monthTransactions}
-                  previousTransactions={monthPreviousTransactions}
-                />
+              <View style={styles.periodSelector}>
+                <Pressable
+                  onPress={() => handleMonthChange(-1)}
+                  style={styles.periodArrowButton}
+                >
+                  <CaretLeftIcon
+                    weight="duotone"
+                    color="rgba(255,255,255,0.70)"
+                  />
+                </Pressable>
+
+                <Text style={styles.periodTitle}>{headerTitle}</Text>
+
+                <Pressable
+                  onPress={() => handleMonthChange(1)}
+                  style={styles.periodArrowButton}
+                  disabled={isCurrentMonth}
+                >
+                  <CaretRightIcon
+                    weight="duotone"
+                    color="rgba(255,255,255,0.70)"
+                    style={isCurrentMonth ? { opacity: 0.3 } : undefined}
+                  />
+                </Pressable>
+              </View>
+            </View>
+
+            <View style={styles.summaryRow}>
+              <View style={styles.summaryCard}>
+                <Text style={styles.summaryLabel}>Entradas</Text>
+                <Text style={styles.summaryNumber} numberOfLines={1}>
+                  R$ {formatBRL(incomeCents)}
+                </Text>
               </View>
 
-              <View
-                pointerEvents={viewMode === "week" ? "auto" : "none"}
-                style={[
-                  styles.chartLayer,
-                  viewMode !== "week" && styles.chartLayerHidden,
-                ]}
-              >
-                <WeeklyIncomeBarChart transactions={weekTransactions} />
+              <View style={styles.summaryCard}>
+                <Text style={styles.summaryLabel}>Saídas</Text>
+                <Text style={styles.summaryNumber} numberOfLines={1}>
+                  R$ {formatBRL(expenseCents)}
+                </Text>
+              </View>
+
+              <View style={styles.summaryCard}>
+                <Text style={styles.summaryLabel}>Saldo</Text>
+                <Text style={styles.summaryNumber} numberOfLines={1}>
+                  R$ {formatSignedBRL(totalCents)}
+                </Text>
               </View>
             </View>
           </View>
 
-          <View style={styles.infoGrid}>
-            <View style={styles.infoCard}>
-              <Text style={styles.infoLabel}>Saldo anterior</Text>
-              <Text style={styles.infoValue}>
-                R$ {formatSignedBRL(previousStats.netCents)}
-              </Text>
-            </View>
+          <View style={styles.mainChartCard}>
+            <View style={styles.chartCardHeader}>
+              <View>
+                <Text style={styles.chartCardTitle}>Ganhos da semana</Text>
 
-            <View style={styles.infoCard}>
-              <Text style={styles.infoLabel}>Diferença vs anterior</Text>
-              <Text
-                style={[
-                  styles.infoValue,
-                  netDiffCents > 0
-                    ? styles.positive
-                    : netDiffCents < 0
-                      ? styles.negative
-                      : null,
-                ]}
-              >
-                {netDiffCents === 0
-                  ? "R$ 0,00"
-                  : `R$ ${formatSignedBRL(netDiffCents)}`}
-              </Text>
-            </View>
+                <View style={styles.chartMetricRow}>
+                  <Text style={styles.chartMetricValue}>
+                    R$ {formatBRL(weekStats.incomeCents)}
+                  </Text>
+                  <Text style={styles.chartMetricSuffix}>total</Text>
+                </View>
+              </View>
 
-            <View style={[styles.infoCard, styles.infoCardFull]}>
-              <Text style={styles.infoLabel}>{projection.label}</Text>
-              <Text style={styles.infoLine}>
-                Entradas:{" "}
-                <Text style={styles.infoValueInline}>
-                  R$ {formatBRL(projection.projectedIncomeCents)}
-                </Text>
-              </Text>
-              <Text style={styles.infoLine}>
-                Saídas:{" "}
-                <Text style={styles.infoValueInline}>
-                  R$ {formatBRL(projection.projectedExpenseCents)}
-                </Text>
-              </Text>
-              <Text style={styles.infoLine}>
-                Saldo:{" "}
+              <View style={styles.compareBadge}>
                 <Text
                   style={[
-                    styles.infoValueInline,
+                    styles.compareBadgeValue,
+                    weekIncomeDiffCents > 0
+                      ? styles.positive
+                      : weekIncomeDiffCents < 0
+                        ? styles.negative
+                        : null,
+                  ]}
+                >
+                  {weekIncomeDiffCents === 0
+                    ? "R$ 0,00"
+                    : `R$ ${formatSignedBRL(weekIncomeDiffCents)}`}
+                </Text>
+                <Text style={styles.compareBadgeLabel}>vs semana anterior</Text>
+              </View>
+            </View>
+
+            <View style={styles.weeklyChartViewport}>
+              <WeeklyIncomeBarChart transactions={weekTransactions} />
+            </View>
+          </View>
+
+          <View style={styles.monthlyChartCard}>
+            <View style={styles.chartCardHeader}>
+              <View>
+                <Text style={styles.chartCardTitle}>Evolução do mês</Text>
+                <View style={styles.chartMetricRow}>
+                  <Text style={styles.chartMetricValue}>
+                    R$ {formatSignedBRL(monthStats.netCents)}
+                  </Text>
+                  <Text style={styles.chartMetricSuffix}>saldo</Text>
+                </View>
+              </View>
+
+              <View style={styles.compareBadge}>
+                <Text
+                  style={[
+                    styles.compareBadgeValue,
+                    monthNetDiffCents > 0
+                      ? styles.positive
+                      : monthNetDiffCents < 0
+                        ? styles.negative
+                        : null,
+                  ]}
+                >
+                  {monthNetDiffCents === 0
+                    ? "R$ 0,00"
+                    : `R$ ${formatSignedBRL(monthNetDiffCents)}`}
+                </Text>
+                <Text style={styles.compareBadgeLabel}>vs mês anterior</Text>
+              </View>
+            </View>
+            <View style={styles.monthlyChartViewport}>
+              <MonthlyIncomeExpenseChart
+                year={selectedYear}
+                month={selectedMonth}
+                currentTransactions={monthTransactions}
+                previousTransactions={monthPreviousTransactions}
+              />
+            </View>
+          </View>
+
+          <View style={styles.insightsSection}>
+            <Text style={styles.sectionTitle}>Insights</Text>
+
+            <View style={styles.expenseOverviewCard}>
+              <View style={styles.expenseOverviewHeader}>
+                <View>
+                  <Text style={styles.expenseOverviewTitle}>
+                    Gastos por categoria
+                  </Text>
+
+                  <Text style={styles.expenseOverviewSubtitle}>
+                    Maiores despesas do mês
+                  </Text>
+                </View>
+
+                <Text style={styles.expenseOverviewTotal}>
+                  R$ {formatBRL(monthStats.expenseCents)}
+                </Text>
+              </View>
+
+              <View style={styles.expenseOverviewContent}>
+                <CategoryDonutChart
+                  data={topExpenseCategories}
+                  size={92}
+                  strokeWidth={15}
+                />
+
+                <View style={styles.expenseOverviewLegend}>
+                  {topExpenseCategories.length > 0 ? (
+                    topExpenseCategories.map((item, index) => (
+                      <View key={item.key} style={styles.expenseLegendItem}>
+                        <View
+                          style={[
+                            styles.categoryLegendDot,
+                            {
+                              backgroundColor: getCategoryDonutColor(index),
+                            },
+                          ]}
+                        />
+
+                        <View style={styles.expenseLegendText}>
+                          <Text
+                            style={styles.expenseLegendLabel}
+                            numberOfLines={1}
+                          >
+                            {item.label}
+                          </Text>
+
+                          <Text style={styles.expenseLegendValue}>
+                            R$ {formatBRL(item.value)}
+                          </Text>
+                        </View>
+                      </View>
+                    ))
+                  ) : (
+                    <Text style={styles.emptyInsightText}>
+                      Sem gastos neste período
+                    </Text>
+                  )}
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.insightsGrid}>
+              <View style={styles.smallInsightCard}>
+                <Text style={styles.smallInsightLabel}>Projeção</Text>
+
+                <Text
+                  style={[
+                    styles.smallInsightValue,
                     projection.projectedNetCents > 0
                       ? styles.positive
                       : projection.projectedNetCents < 0
                         ? styles.negative
                         : null,
                   ]}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
                 >
                   R$ {formatSignedBRL(projection.projectedNetCents)}
                 </Text>
-              </Text>
-            </View>
 
-            <View style={[styles.infoCard, styles.infoCardFull]}>
-              <Text style={styles.infoLabel}>Gasto por categoria (top 4)</Text>
-              {categoryTotals.every((c) => c.value === 0) ? (
-                <Text style={styles.emptySubtitle}>Sem gastos no período.</Text>
-              ) : (
-                categoryTotals.map((c) => (
-                  <View key={c.key} style={styles.categoryRow}>
-                    <Text style={styles.categoryLabel}>{c.label}</Text>
-                    <Text style={styles.categoryValue}>
-                      R$ {formatBRL(c.value)}
+                <Text style={styles.smallInsightHint} numberOfLines={1}>
+                  saldo estimado
+                </Text>
+              </View>
+
+              <View style={styles.smallInsightCard}>
+                <Text style={styles.smallInsightLabel}>Melhor dia</Text>
+
+                {bestWeekdayInsight ? (
+                  <>
+                    <Text style={styles.smallInsightValue} numberOfLines={1}>
+                      {bestWeekdayInsight.label}
                     </Text>
-                  </View>
-                ))
-              )}
+
+                    <Text style={styles.smallInsightHint} numberOfLines={1}>
+                      R$ {formatBRL(bestWeekdayInsight.valueCents)}
+                    </Text>
+                  </>
+                ) : (
+                  <>
+                    <Text style={styles.smallInsightValue}>--</Text>
+                    <Text style={styles.smallInsightHint}>sem dados</Text>
+                  </>
+                )}
+              </View>
+
+              <View style={styles.smallInsightCard}>
+                <Text style={styles.smallInsightLabel}>Melhor loja</Text>
+
+                {bestStoreInsight ? (
+                  <>
+                    <Text style={styles.smallInsightValue} numberOfLines={1}>
+                      {bestStoreInsight.label}
+                    </Text>
+
+                    <Text style={styles.smallInsightHint} numberOfLines={1}>
+                      R$ {formatBRL(bestStoreInsight.valueCents)}
+                    </Text>
+                  </>
+                ) : (
+                  <>
+                    <Text style={styles.smallInsightValue}>--</Text>
+                    <Text style={styles.smallInsightHint}>sem dados</Text>
+                  </>
+                )}
+              </View>
             </View>
           </View>
 
@@ -600,70 +735,174 @@ export const styles = StyleSheet.create({
     paddingTop: 10,
   },
   header: {
-    padding: 20,
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 12,
   },
-  headerTopRow: {
+
+  brandRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+  },
+  brandText: {
+    fontSize: 24,
+    fontWeight: "800",
+    letterSpacing: 1.2,
+    color: "rgba(255,255,255,0.94)",
+  },
+  brandSubtitle: {
+    marginTop: 4,
+    fontSize: 13,
+    color: "rgba(255,255,255,0.56)",
+  },
+  mainChartCard: {
+    marginTop: 14,
+    borderRadius: 22,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+    backgroundColor: "rgba(255,255,255,0.055)",
+  },
+
+  chartCardHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 14,
+    marginBottom: 14,
+  },
+
+  chartCardTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "rgba(255,255,255,0.82)",
+  },
+
+  chartMetricRow: {
+    marginTop: 8,
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 6,
+  },
+
+  chartMetricValue: {
+    fontSize: 31,
+    lineHeight: 36,
+    fontWeight: "800",
+    letterSpacing: -0.8,
+    color: "rgba(255,255,255,0.96)",
+  },
+
+  chartMetricSuffix: {
+    marginBottom: 4,
+    fontSize: 13,
+    color: "rgba(255,255,255,0.56)",
+  },
+
+  compareBadge: {
+    minWidth: 112,
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    alignItems: "flex-end",
+    backgroundColor: "rgba(255,179,90,0.10)",
+  },
+
+  compareBadgeValue: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#FFB35A",
+  },
+
+  compareBadgeLabel: {
+    marginTop: 2,
+    fontSize: 11,
+    textAlign: "right",
+    color: "rgba(255,255,255,0.58)",
+  },
+
+  weeklyChartViewport: {
+    height: 145,
+    marginTop: 4,
+  },
+  monthlyChartCard: {
+    marginTop: 14,
+    borderRadius: 22,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+    backgroundColor: "rgba(255,255,255,0.045)",
+  },
+
+  monthlyChartViewport: {
+    height: 165,
+    marginTop: 8,
+  },
+  heroTextBlock: {
+    marginTop: 28,
+  },
+
+  heroTitle: {
+    fontSize: 34,
+    fontWeight: "800",
+    color: "rgba(255,255,255,0.96)",
+  },
+
+  heroSubtitle: {
+    marginTop: 6,
+    fontSize: 16,
+    lineHeight: 22,
+    color: "rgba(255,255,255,0.62)",
+  },
+
+  periodCard: {
+    marginTop: 10,
+    borderRadius: 22,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+    backgroundColor: "rgba(255,255,255,0.055)",
+  },
+
+  periodHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+
+  periodLabel: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "rgba(255,255,255,0.72)",
+  },
+
+  periodSelector: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+
+  periodArrowButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,255,255,0.05)",
+  },
+
+  periodTitle: {
+    minWidth: 112,
+    textAlign: "center",
+    fontSize: 14,
+    fontWeight: "800",
+    textTransform: "capitalize",
+    color: "rgba(255,255,255,0.90)",
   },
   settingsButton: {
     padding: 8,
-  },
-  headerRightSpacer: {
-    width: 38,
-  },
-  monthRow: {
-    flex: 1,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 8,
-  },
-  monthButton: {
-    padding: 10,
-  },
-  monthTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
-    textTransform: "capitalize",
-    color: "rgba(255,255,255,0.70)",
-  },
-  summaryHeaderRow: {
-    alignItems: "flex-end",
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: 20,
-  },
-  summaryTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "rgba(255,255,255,0.85)",
-  },
-  viewModeRow: {
-    flexDirection: "row",
-    alignSelf: "center",
-    gap: 8,
-  },
-  viewModeChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.18)",
-    backgroundColor: "rgba(255,255,255,0.04)",
-  },
-  viewModeChipSelected: {
-    borderColor: "#FFB35A",
-    backgroundColor: "rgba(255,179,90,0.18)",
-  },
-  viewModeChipText: {
-    fontSize: 13,
-    color: "rgba(255,255,255,0.75)",
-  },
-  viewModeChipTextSelected: {
-    fontWeight: "700",
-    color: "rgba(255,255,255,0.95)",
   },
   summaryRow: {
     flexDirection: "row",
@@ -691,85 +930,11 @@ export const styles = StyleSheet.create({
     fontWeight: "600",
     color: "rgba(255,255,255,0.90)",
   },
-  chartSection: {
-    marginTop: 16,
-  },
-  chartSectionTitle: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "rgba(255,255,255,0.92)",
-    marginBottom: 10,
-  },
-  chartViewport: {
-    height: 320,
-    position: "relative",
-  },
-  chartLayer: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-  },
-  chartLayerHidden: {
-    opacity: 0,
-  },
-  infoGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-    marginTop: 4,
-  },
-  infoCard: {
-    flexBasis: "48%",
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.14)",
-    borderRadius: 12,
-    padding: 12,
-    backgroundColor: "rgba(255,255,255,0.04)",
-  },
-  infoCardFull: {
-    flexBasis: "100%",
-  },
-  infoLabel: {
-    fontSize: 12,
-    marginBottom: 6,
-    color: "rgba(255,255,255,0.70)",
-  },
-  infoValue: {
-    fontSize: 14,
-    fontWeight: "800",
-    color: "rgba(255,255,255,0.95)",
-  },
-  infoLine: {
-    fontSize: 13,
-    marginTop: 2,
-    color: "rgba(255,255,255,0.85)",
-  },
-  infoValueInline: {
-    fontSize: 13,
-    fontWeight: "800",
-    color: "rgba(255,255,255,0.95)",
-  },
   positive: {
     color: "#28a745",
   },
   negative: {
     color: "#ff3b30",
-  },
-  categoryRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingVertical: 2,
-    gap: 10,
-  },
-  categoryLabel: {
-    fontSize: 13,
-    color: "rgba(255,255,255,0.90)",
-  },
-  categoryValue: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "rgba(255,255,255,0.95)",
   },
   previewHeader: {
     marginTop: 14,
@@ -870,5 +1035,137 @@ export const styles = StyleSheet.create({
     marginLeft: 25,
     marginRight: 25,
     opacity: 0.7,
+  },
+  insightsSection: {
+    marginTop: 18,
+  },
+
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "rgba(255,255,255,0.94)",
+    marginBottom: 10,
+  },
+
+  insightsGrid: {
+    marginTop: 10,
+    flexDirection: "row",
+    gap: 8,
+  },
+
+  smallInsightCard: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 88,
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+    backgroundColor: "rgba(255,255,255,0.045)",
+    overflow: "hidden",
+  },
+
+  smallInsightLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "rgba(255,255,255,0.68)",
+  },
+
+  smallInsightValue: {
+    marginTop: 9,
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: "800",
+    color: "rgba(255,255,255,0.94)",
+  },
+
+  smallInsightHint: {
+    marginTop: 4,
+    fontSize: 11,
+    lineHeight: 14,
+    color: "#FFB35A",
+  },
+
+  categoryLegendDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+
+  expenseOverviewCard: {
+    borderRadius: 18,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+    backgroundColor: "rgba(255,255,255,0.045)",
+  },
+
+  expenseOverviewHeader: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+
+  expenseOverviewTitle: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "rgba(255,255,255,0.88)",
+  },
+
+  expenseOverviewSubtitle: {
+    marginTop: 3,
+    fontSize: 11,
+    color: "rgba(255,255,255,0.48)",
+  },
+
+  expenseOverviewTotal: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "rgba(255,255,255,0.90)",
+  },
+
+  expenseOverviewContent: {
+    marginTop: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 20,
+  },
+
+  expenseOverviewLegend: {
+    flex: 1,
+    gap: 9,
+  },
+
+  expenseLegendItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+
+  expenseLegendText: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+
+  expenseLegendLabel: {
+    flex: 1,
+    fontSize: 12,
+    color: "rgba(255,255,255,0.64)",
+  },
+
+  expenseLegendValue: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "rgba(255,255,255,0.88)",
+  },
+
+  emptyInsightText: {
+    fontSize: 12,
+    color: "rgba(255,255,255,0.48)",
   },
 });

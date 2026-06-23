@@ -96,6 +96,11 @@ export function WeeklyIncomeBarChart({ transactions }: Props) {
               points={points.income}
               chartBounds={chartBounds}
               color="#28A745"
+              barWidth={16}
+              roundedCorners={{
+                topLeft: 6,
+                topRight: 6,
+              }}
               animate={{ type: "timing", duration: 250 }}
             />
           )}
@@ -118,7 +123,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   chartWrapper: {
-    height: 220,
+    height: 135,
   },
   emptyText: {
     color: "rgba(255,255,255,0.65)",
