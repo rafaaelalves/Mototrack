@@ -30,8 +30,10 @@ import { Transaction } from "@/src/domain/transaction";
 import { formatBRL, formatDay, monthLabelPT } from "@/src/utils/format";
 
 import {
-  CategoryOptions,
-  type TransactionCategory,
+  ExpenseCategoryOptions,
+  IncomeCategoryOptions,
+  type ExpenseCategory,
+  type IncomeCategory,
 } from "@/src/domain/categories";
 
 //Mes inteiro
@@ -46,13 +48,11 @@ function getMonthRange(year: number, month1to12: number) {
 
 type TypeFilter = "all" | "income" | "expense";
 
-type CategoryFilter = "all" | TransactionCategory | "uncategorized";
-
-const categoryFilterOptions: { key: CategoryFilter; label: string }[] = [
-  { key: "all", label: "Todas" },
-  ...CategoryOptions.map((c) => ({ key: c.key, label: c.label })),
-  { key: "uncategorized", label: "Sem categoria" },
-];
+type CategoryFilter =
+  | "all"
+  | ExpenseCategory
+  | IncomeCategory
+  | "uncategorized";
 
 export default function TransactionsScreen() {
   const router = useRouter();
@@ -68,10 +68,38 @@ export default function TransactionsScreen() {
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("all");
   const [filterModalVisible, setFilterModalVisible] = useState(false);
 
+  const categoryFilterOptions = useMemo(() => {
+    if (typeFilter === "income") {
+      return [
+        { key: "all" as const, label: "Todas" },
+        ...IncomeCategoryOptions.map((c) => ({
+          key: c.key,
+          label: c.label,
+        })),
+        { key: "uncategorized" as const, label: "Sem categoria" },
+      ];
+    }
+
+    if (typeFilter === "expense") {
+      return [
+        { key: "all" as const, label: "Todas" },
+        ...ExpenseCategoryOptions.map((c) => ({
+          key: c.key,
+          label: c.label,
+        })),
+        { key: "uncategorized" as const, label: "Sem categoria" },
+      ];
+    }
+
+    return [{ key: "all" as const, label: "Todas" }];
+  }, [typeFilter]);
+
   const now = new Date();
   const parsedYear = Number(params.year);
   const parsedMonth = Number(params.month);
-  const initialYear = Number.isFinite(parsedYear) ? parsedYear : now.getFullYear();
+  const initialYear = Number.isFinite(parsedYear)
+    ? parsedYear
+    : now.getFullYear();
   const initialMonth =
     Number.isFinite(parsedMonth) && parsedMonth >= 1 && parsedMonth <= 12
       ? parsedMonth
@@ -121,8 +149,6 @@ export default function TransactionsScreen() {
       if (typeFilter !== "all" && t.type !== typeFilter) return false;
 
       if (categoryFilter !== "all") {
-        if (t.type !== "expense") return false;
-
         if (categoryFilter === "uncategorized") {
           if (t.category !== null) return false;
         } else {
@@ -346,7 +372,7 @@ export default function TransactionsScreen() {
             <View style={styles.chipsRow}>
               {categoryFilterOptions.map((c) => {
                 const selected = categoryFilter === c.key;
-                const disabled = typeFilter !== "expense";
+                const disabled = typeFilter == "all";
                 return (
                   <Pressable
                     key={c.key}
