@@ -1,5 +1,12 @@
 import { deleteTransaction, getTransactionById } from "@/src/db/transactions";
-import { Transaction } from "@/src/domain/transaction";
+
+import {
+  expenseCategoryLabel,
+  incomeCategoryLabel,
+} from "@/src/domain/categories";
+
+import type { Transaction } from "@/src/domain/transaction";
+
 import { formatBRL, formatDateBR } from "@/src/utils/format";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
@@ -17,21 +24,6 @@ import {
 import { useCallback, useMemo, useState } from "react";
 import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-
-function categoryLabel(key: string | null) {
-  switch (key) {
-    case "fuel":
-      return "Combustível";
-    case "food":
-      return "Alimentação";
-    case "maintenance":
-      return "Manutenção";
-    case "other":
-      return "Outros";
-    default:
-      return null;
-  }
-}
 
 export default function TransactionDetails() {
   const router = useRouter();
@@ -52,7 +44,7 @@ export default function TransactionDetails() {
   useFocusEffect(
     useCallback(() => {
       load();
-    }, [load])
+    }, [load]),
   );
 
   const header = useMemo(() => {
@@ -64,6 +56,13 @@ export default function TransactionDetails() {
 
     return { isIncome, sign, label };
   }, [tx]);
+
+  const category =
+    tx?.type === "income"
+      ? incomeCategoryLabel(tx.category)
+      : tx?.type === "expense"
+        ? expenseCategoryLabel(tx.category)
+        : null;
 
   async function handleDelete() {
     if (!tx) return;
@@ -129,16 +128,15 @@ export default function TransactionDetails() {
               <Text style={styles.metaText}>{formatDateBR(tx.dateISO)}</Text>
             </View>
 
-            {tx.type === "expense" && categoryLabel(tx.category) ? (
+            {category ? (
               <View style={styles.metaRow}>
                 <Tag
                   size={18}
                   weight="duotone"
                   color="rgba(255,255,255,0.90)"
                 />
-                <Text style={styles.metaText}>
-                  {categoryLabel(tx.category)}
-                </Text>
+
+                <Text style={styles.metaText}>{category}</Text>
               </View>
             ) : null}
 

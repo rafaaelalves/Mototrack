@@ -1,5 +1,9 @@
 import { listTransactionsByDateRange } from "@/src/db/transactions";
-import { CategoryOptions } from "@/src/domain/categories";
+import {
+  ExpenseCategoryOptions,
+  isRunRateIncomeCategory,
+} from "@/src/domain/categories";
+import { calculateMonthlyProjection } from "@/src/domain/monthlyProjection";
 import { Transaction, computePeriodStats } from "@/src/domain/transaction";
 import {
   CategoryDonutChart,
@@ -109,14 +113,34 @@ export default function Index() {
     Transaction[]
   >([]);
 
-  const weekStats = useMemo(
-    () => computePeriodStats(weekTransactions),
+  const weekRunRateIncomeTransactions = useMemo(
+    () =>
+      weekTransactions.filter(
+        (transaction) =>
+          transaction.type === "income" &&
+          isRunRateIncomeCategory(transaction.category),
+      ),
     [weekTransactions],
   );
 
-  const previousWeekStats = useMemo(
-    () => computePeriodStats(weekPreviousTransactions),
+  const previousWeekRunRateIncomeTransactions = useMemo(
+    () =>
+      weekPreviousTransactions.filter(
+        (transaction) =>
+          transaction.type === "income" &&
+          isRunRateIncomeCategory(transaction.category),
+      ),
     [weekPreviousTransactions],
+  );
+
+  const weekStats = useMemo(
+    () => computePeriodStats(weekRunRateIncomeTransactions),
+    [weekRunRateIncomeTransactions],
+  );
+
+  const previousWeekStats = useMemo(
+    () => computePeriodStats(previousWeekRunRateIncomeTransactions),
+    [previousWeekRunRateIncomeTransactions],
   );
 
   const monthStats = useMemo(
@@ -209,6 +233,19 @@ export default function Index() {
   const totalCents = monthStats.netCents;
   const netDiffCents = monthNetDiffCents;
 
+  const incomeTransactions = useMemo(
+    () => monthTransactions.filter((item) => item.type === "income"),
+    [monthTransactions],
+  );
+
+  const runRateIncomeTransactions = useMemo(
+    () =>
+      incomeTransactions.filter((transaction) =>
+        isRunRateIncomeCategory(transaction.category),
+      ),
+    [incomeTransactions],
+  );
+
   const projection = useMemo(() => {
     const currentDate = new Date();
     const daysInMonth = new Date(selectedYear, selectedMonth, 0).getDate();
@@ -221,23 +258,16 @@ export default function Index() {
       ? currentDate.getDate()
       : daysInMonth;
 
-    const safeElapsedDays = Math.max(1, Math.min(elapsedDays, daysInMonth));
-
-    const avgIncomePerDayCents = monthStats.incomeCents / safeElapsedDays;
-    const avgExpensePerDayCents = monthStats.expenseCents / safeElapsedDays;
-    const avgNetPerDayCents = monthStats.netCents / safeElapsedDays;
-
-    return {
-      projectedIncomeCents: Math.round(avgIncomePerDayCents * daysInMonth),
-      projectedExpenseCents: Math.round(avgExpensePerDayCents * daysInMonth),
-      projectedNetCents: Math.round(avgNetPerDayCents * daysInMonth),
-      label: "Projeção do mês",
-    };
-  }, [monthStats, selectedYear, selectedMonth]);
+    return calculateMonthlyProjection({
+      transactions: monthTransactions,
+      elapsedDays,
+      daysInMonth,
+    });
+  }, [monthTransactions, selectedYear, selectedMonth]);
 
   const categoryTotals = useMemo(() => {
     const rows = [
-      ...CategoryOptions.map((c) => ({
+      ...ExpenseCategoryOptions.map((c) => ({
         key: c.key,
         label: c.label,
         value: monthStats.expenseByCategoryCents[c.key],
@@ -257,15 +287,10 @@ export default function Index() {
     [categoryTotals],
   );
 
-  const incomeTransactions = useMemo(
-    () => monthTransactions.filter((item) => item.type === "income"),
-    [monthTransactions],
-  );
-
   const bestWeekdayInsight = useMemo(() => {
     const totalsByWeekday = new Map<string, number>();
 
-    for (const item of incomeTransactions) {
+    for (const item of runRateIncomeTransactions) {
       const weekday = getWeekdayLabelFromISO(item.dateISO);
       const currentTotal = totalsByWeekday.get(weekday) ?? 0;
 
@@ -284,12 +309,12 @@ export default function Index() {
       label: best[0],
       valueCents: best[1],
     };
-  }, [incomeTransactions]);
+  }, [runRateIncomeTransactions]);
 
   const bestStoreInsight = useMemo(() => {
     const totalsByStore = new Map<string, number>();
 
-    for (const item of incomeTransactions) {
+    for (const item of runRateIncomeTransactions) {
       const storeName = normalizeStoreName(item.title);
 
       if (!storeName) continue;
@@ -311,7 +336,7 @@ export default function Index() {
       label: best[0],
       valueCents: best[1],
     };
-  }, [incomeTransactions]);
+  }, [runRateIncomeTransactions]);
 
   function handleMonthChange(delta: number) {
     let newMonth = selectedMonth + delta;
@@ -457,7 +482,9 @@ export default function Index() {
             </View>
 
             <View style={styles.weeklyChartViewport}>
-              <WeeklyIncomeBarChart transactions={weekTransactions} />
+              <WeeklyIncomeBarChart
+                transactions={weekRunRateIncomeTransactions}
+              />
             </View>
           </View>
 

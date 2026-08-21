@@ -1,37 +1,51 @@
-import { CategoryOptions, type TransactionCategory } from "./categories";
+import {
+  ExpenseCategoryOptions,
+  type ExpenseCategory,
+  type IncomeCategory,
+} from "./categories";
 
 export type TransactionType = "income" | "expense";
 
-export type Transaction = {
+type BaseTransaction = {
   id: number;
   dateISO: string;
-  type: TransactionType;
   amountCents: number;
   title: string;
   createdAt: number;
   updatedAt: number;
   deletedAt: number | null;
   notes: string | null;
-  category: TransactionCategory | null;
+};
+
+export type IncomeTransaction = BaseTransaction & {
+  type: "income";
+  category: IncomeCategory | null;
   distanceMeters: number | null;
 };
+
+export type ExpenseTransaction = BaseTransaction & {
+  type: "expense";
+  category: ExpenseCategory | null;
+  distanceMeters: number | null;
+};
+
+export type Transaction = IncomeTransaction | ExpenseTransaction;
 
 export type PeriodStats = {
   incomeCents: number;
   expenseCents: number;
   netCents: number;
-  expenseByCategoryCents: Record<TransactionCategory, number>;
+  expenseByCategoryCents: Record<ExpenseCategory, number>;
   uncategorizedCents: number;
   km: number;
   netPerKm: number | null; //Lucro/Km
   costPerKm: number | null; //Custo/Km
 };
 
-function categoryMap(): Record<TransactionCategory, number> {
-  return Object.fromEntries(CategoryOptions.map((c) => [c.key, 0])) as Record<
-    TransactionCategory,
-    number
-  >;
+function categoryMap(): Record<ExpenseCategory, number> {
+  return Object.fromEntries(
+    ExpenseCategoryOptions.map((c) => [c.key, 0]),
+  ) as Record<ExpenseCategory, number>;
 }
 
 export function computePeriodStats(transactions: Transaction[]): PeriodStats {

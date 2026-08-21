@@ -4,8 +4,10 @@ import {
   updateTransaction,
 } from "@/src/db/transactions";
 import {
-  CategoryOptions,
-  type TransactionCategory,
+  ExpenseCategoryOptions,
+  IncomeCategoryOptions,
+  type ExpenseCategory,
+  type IncomeCategory,
 } from "@/src/domain/categories";
 import DateTimePicker, {
   DateTimePickerEvent,
@@ -88,7 +90,12 @@ export default function NewEntry() {
   const [amount, setAmount] = useState("");
   const [title, setTitle] = useState("");
   const [notes, setNotes] = useState("");
-  const [category, setCategory] = useState<TransactionCategory | null>(null);
+  const [incomeCategory, setIncomeCategory] = useState<IncomeCategory | null>(
+    null,
+  );
+
+  const [expenseCategory, setExpenseCategory] =
+    useState<ExpenseCategory | null>(null);
   const [km, setKm] = useState(""); // string porque vem do TextInput
 
   const [selectedDate, setSelectedDate] = useState(new Date()); // Data atual
@@ -96,7 +103,10 @@ export default function NewEntry() {
   const dateISO = toISODate(selectedDate);
 
   const cents = parseMoneyToCents(amount);
-  const canSave = title.trim().length > 0 && cents > 0;
+  const canSave =
+    title.trim().length > 0 &&
+    cents > 0 &&
+    (type === "expense" || incomeCategory !== null);
 
   function onChangeDate(event: DateTimePickerEvent, date?: Date) {
     setShowPicker(false);
@@ -123,7 +133,11 @@ export default function NewEntry() {
       setNotes(tx.notes ?? "");
       setAmount((tx.amountCents / 100).toFixed(2).replace(".", ","));
       setSelectedDate(fromISODate(tx.dateISO));
-      setCategory(tx.category ?? null);
+      if (tx.type === "income") {
+        setIncomeCategory(tx.category);
+      } else {
+        setExpenseCategory(tx.category);
+      }
 
       const kmValue = tx.distanceMeters
         ? (tx.distanceMeters / 1000).toFixed(1).replace(".", ",")
@@ -161,22 +175,44 @@ export default function NewEntry() {
       );
       return;
     }
+    if (type === "income" && !incomeCategory) {
+      Alert.alert("Erro", "Selecione uma categoria para a entrada.");
+      return;
+    }
 
     const distanceMeters = kmToMeters(km);
-    const payload = {
-      dateISO,
-      type,
-      amountCents: cents,
-      title: title.trim(),
-      notes: notes.trim() ? notes.trim() : null,
-      category: type === "expense" ? category : null,
-      distanceMeters: type === "income" ? distanceMeters : null,
-    };
+    if (type === "income") {
+      const payload = {
+        dateISO,
+        type: "income" as const,
+        amountCents: cents,
+        title: title.trim(),
+        notes: notes.trim() ? notes.trim() : null,
+        category: incomeCategory,
+        distanceMeters,
+      };
 
-    if (isEditing) {
-      await updateTransaction(db, editingId!, payload);
+      if (isEditing) {
+        await updateTransaction(db, editingId!, payload);
+      } else {
+        await insertTransaction(db, payload);
+      }
     } else {
-      await insertTransaction(db, payload);
+      const payload = {
+        dateISO,
+        type: "expense" as const,
+        amountCents: cents,
+        title: title.trim(),
+        notes: notes.trim() ? notes.trim() : null,
+        category: expenseCategory,
+        distanceMeters: null,
+      };
+
+      if (isEditing) {
+        await updateTransaction(db, editingId!, payload);
+      } else {
+        await insertTransaction(db, payload);
+      }
     }
 
     router.back();
@@ -221,7 +257,6 @@ export default function NewEntry() {
                 ]}
                 onPress={() => {
                   setType("income");
-                  setCategory(null); // limpa categoria (não faz sentido em income)
                 }}
               >
                 <Text style={styles.toggleText}>Entrada</Text>
@@ -240,7 +275,9 @@ export default function NewEntry() {
                 onPress={() => {
                   setType("expense");
                   setKm(""); // limpa km (não faz sentido em expense)
-                  if (!category) setCategory("other");
+                  if (!expenseCategory) {
+                    setExpenseCategory("other");
+                  }
                 }}
               >
                 <Text style={styles.toggleText}>Saída</Text>
@@ -304,6 +341,46 @@ export default function NewEntry() {
                 placeholderTextColor="rgba(255,255,255,0.45)"
               />
             </View>
+            {type === "income" && (
+              <View style={styles.formGroup}>
+                <Text style={styles.label}>Categoria</Text>
+                <Text style={styles.helperText}>
+                  Define como esta entrada participa das projeções.
+                </Text>
+
+                <View style={styles.chipsRow}>
+                  {IncomeCategoryOptions.map((c) => {
+                    const selected = incomeCategory === c.key;
+
+                    return (
+                      <Pressable
+                        key={c.key}
+                        onPress={() =>
+                          setIncomeCategory(selected ? null : c.key)
+                        }
+                        style={({ pressed }) => [
+                          styles.chip,
+                          selected && styles.chipSelected,
+                          pressed && {
+                            opacity: 0.6,
+                            transform: [{ scale: 0.97 }],
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.chipText,
+                            selected && styles.chipTextSelected,
+                          ]}
+                        >
+                          {c.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+            )}
             {type === "expense" && (
               <View style={styles.formGroup}>
                 <Text style={styles.label}>Categoria</Text>
@@ -312,12 +389,14 @@ export default function NewEntry() {
                 </Text>
 
                 <View style={styles.chipsRow}>
-                  {CategoryOptions.map((c) => {
-                    const selected = category === c.key;
+                  {ExpenseCategoryOptions.map((c) => {
+                    const selected = expenseCategory === c.key;
                     return (
                       <Pressable
                         key={c.key}
-                        onPress={() => setCategory(selected ? null : c.key)}
+                        onPress={() =>
+                          setExpenseCategory(selected ? null : c.key)
+                        }
                         style={({ pressed }) => [
                           styles.chip,
                           selected && styles.chipSelected,

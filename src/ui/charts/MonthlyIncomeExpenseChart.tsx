@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { CartesianChart, Line } from "victory-native";
 
+import { calculateMonthlyProjection } from "@/src/domain/monthlyProjection";
 import type { Transaction } from "@/src/domain/transaction";
 import { Nunito_400Regular } from "@expo-google-fonts/nunito";
 
@@ -124,14 +125,11 @@ export function MonthlyIncomeExpenseChart({
       1,
       Math.min(lastActualDay, currentMonthDays),
     );
-    const avgIncomePerDay =
-      safeLastActualDay > 0
-        ? currentIncomeAcc[safeLastActualDay - 1] / safeLastActualDay
-        : 0;
-    const avgExpensePerDay =
-      safeLastActualDay > 0
-        ? currentExpenseAcc[safeLastActualDay - 1] / safeLastActualDay
-        : 0;
+    const projection = calculateMonthlyProjection({
+      transactions: currentTransactions,
+      elapsedDays: safeLastActualDay,
+      daysInMonth: currentMonthDays,
+    });
 
     return Array.from({ length: currentMonthDays }, (_, i) => {
       const day = i + 1;
@@ -150,13 +148,15 @@ export function MonthlyIncomeExpenseChart({
 
       if (isSelectedCurrentMonth && day >= safeLastActualDay) {
         const projectedDaysAfterStart = day - safeLastActualDay;
+
         incomeProjected =
           (currentIncomeAcc[safeLastActualDay - 1] +
-            avgIncomePerDay * projectedDaysAfterStart) /
+            projection.avgRunRateIncomePerDayCents * projectedDaysAfterStart) /
           100;
+
         expenseProjected =
           (currentExpenseAcc[safeLastActualDay - 1] +
-            avgExpensePerDay * projectedDaysAfterStart) /
+            projection.avgExpensePerDayCents * projectedDaysAfterStart) /
           100;
       }
       return {
