@@ -107,3 +107,10 @@ yarn expo start
 ```
 
 Depois é só abrir no Expo Go (dispositivo físico) ou emulador.
+
+
+## 🧭 Evolução do projeto
+
+A proposta de evolução, as prioridades e os critérios de aceite estão em [docs/ROADMAP.md](docs/ROADMAP.md).
+
+A primeira etapa é estabilizar migrações e backup antes de adicionar turnos, veículos e rentabilidade. Consulte [docs/QA_PHASE0.md](docs/QA_PHASE0.md) para os testes exigidos antes de integrar a fase 0 à `develop`. Os documentos descrevem propostas e atividades pendentes; não devem ser confundidos com funcionalidades já lançadas.
