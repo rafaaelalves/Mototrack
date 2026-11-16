@@ -26,3 +26,23 @@
 
 ## Decisão de integração
 Manter o PR da integração em **Draft** até QA. Para levar à `develop`, decidir uma via de merge evitando aplicar os quatro PRs paralelamente sem revisão. `master` permanece intacta.
+
+## Testes cruzados adicionados na integração
+
+Além das suítes de cada PR, `tests/phase0-integration.test.mjs` executa o SQLite real do Node 22 e cobre:
+
+1. Criação de banco + migração + restauração de dados com centavos, categoria, quilômetros e exclusão lógica preservados.
+2. Migração de tabela antiga e aceitação de backup v1 sem campos opcionais.
+3. Falha provocada durante INSERT, com rollback preservando todos os registros anteriores.
+4. Bloqueio de backup vazio ao tentar substituir banco com registros.
+5. Rejeição de backup inválido e de IDs duplicados antes de qualquer escrita.
+
+O núcleo SQL da restauração foi isolado em `src/db/restoreCore.ts` e chamado pela rotina Android/iOS dentro da transação exclusiva do Expo. A CI verificou TypeScript e o conjunto de testes Node/SQLite. **Isso não comprova o comportamento do sistema de arquivos ou das transações exclusivas no Android real.**
+
+### Falha detectada durante a integração
+
+Uma revisão intermediária removeu involuntariamente a função de exportação `buildBackup`. O compilador TypeScript detectou a regressão no CI e a função foi restaurada antes de considerar o conjunto validado. Os registros finais de CI devem ser verificados no PR #11; resultados de commits intermediários não representam a versão final.
+
+### Rótulo ajustado
+
+`Dia da semana (receita)` descreve a soma agrupada por dia da semana — **não** lucro por turno nem receita de uma data específica. A comparação por estabelecimento permanece limitada aos títulos livres.
