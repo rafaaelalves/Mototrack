@@ -1,0 +1,23 @@
+name: Validacao do Mototrack
+
+on:
+  pull_request:
+    branches:
+      - develop
+  workflow_dispatch:
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Instalar dependências
+        run: npm ci
+      - name: Validar tipos
+        run: npx tsc --noEmit
+      - name: Testes unitários
+        run: npm run test:unit
