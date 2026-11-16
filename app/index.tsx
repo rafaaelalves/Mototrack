@@ -603,7 +603,7 @@ export default function Index() {
               </View>
 
               <View style={styles.smallInsightCard}>
-                <Text style={styles.smallInsightLabel}>Maior receita por dia</Text>
+                <Text style={styles.smallInsightLabel}>Dia da semana (receita)</Text>
 
                 {bestWeekdayInsight ? (
                   <>
