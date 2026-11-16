@@ -6,6 +6,19 @@ import { replaceTransactions } from "./restoreCore";
 
 export type { BackupFile } from "@/src/domain/backupValidation";
 
+// Inclui lançamentos excluídos logicamente para preservar o banco completo.
+export async function buildBackup(db: SQLiteDatabase): Promise<BackupFile> {
+  const rows = await db.getAllAsync<Transaction>(
+    `SELECT * FROM transactions ORDER BY dateISO DESC, createdAt DESC;`,
+  );
+
+  return parseBackupFile({
+    version: 1,
+    exportedAt: Date.now(),
+    transactions: rows,
+  });
+}
+
 /**
  * Restauração atômica: se algum INSERT falhar, o DELETE é revertido.
  * No Android/iOS, transação exclusiva impede que consultas externas
