@@ -143,7 +143,6 @@ export function MonthlyIncomeExpenseChart({
 
       let incomeProjected: number | null = null;
 
-
       if (isSelectedCurrentMonth && day >= safeLastActualDay) {
         const projectedDaysAfterStart = day - safeLastActualDay;
 
@@ -151,7 +150,6 @@ export function MonthlyIncomeExpenseChart({
           (currentIncomeAcc[safeLastActualDay - 1] +
             projection.avgRunRateIncomePerDayCents * projectedDaysAfterStart) /
           100;
-
       }
       return {
         day,
@@ -170,7 +168,6 @@ export function MonthlyIncomeExpenseChart({
       (item.expenseCurrent ?? 0) > 0 ||
       (item.incomePrevious ?? 0) > 0 ||
       (item.expensePrevious ?? 0) > 0 ||
-      (item.incomeProjected ?? 0) > 0 ||
       (item.incomeProjected ?? 0) > 0,
   );
 
@@ -282,10 +279,12 @@ export function MonthlyIncomeExpenseChart({
           <Text style={styles.legendText}>Saídas</Text>
         </View>
       </View>
-      <Text style={styles.projectionNote}>
-        Linha pontilhada: tendência linear das entregas registradas.
-        Não prevê despesas futuras nem salário ainda não lançado.
-      </Text>
+      {year === new Date().getFullYear() && month === new Date().getMonth() + 1 ? (
+        <Text style={styles.projectionNote}>
+          Linha pontilhada: tendência linear das entregas registradas.
+          Não prevê despesas futuras nem salário ainda não lançado.
+        </Text>
+      ) : null}
     </View>
   );
 }
