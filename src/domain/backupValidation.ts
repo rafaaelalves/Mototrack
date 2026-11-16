@@ -29,10 +29,10 @@ function objectAt(value: unknown, label: string): Record<string, unknown> {
 }
 
 function integerAt(value: unknown, label: string, min = 0): number {
-  if (!Number.isSafeInteger(value) || (value as number) < min) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < min) {
     throw new Error(`${label} precisa ser um número inteiro válido.`);
   }
-  return value as number;
+  return value;
 }
 
 function optionalInteger(
