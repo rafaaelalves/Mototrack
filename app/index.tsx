@@ -3,6 +3,7 @@ import {
   ExpenseCategoryOptions,
   isRunRateIncomeCategory,
 } from "@/src/domain/categories";
+import { buildExpenseBreakdown } from "@/src/domain/expenseBreakdown";
 import { calculateMonthlyProjection } from "@/src/domain/monthlyProjection";
 import { Transaction, computePeriodStats } from "@/src/domain/transaction";
 import {
@@ -265,7 +266,7 @@ export default function Index() {
     });
   }, [monthTransactions, selectedYear, selectedMonth]);
 
-  const categoryTotals = useMemo(() => {
+  const topExpenseCategories = useMemo(() => {
     const rows = [
       ...ExpenseCategoryOptions.map((c) => ({
         key: c.key,
@@ -279,13 +280,8 @@ export default function Index() {
       },
     ];
 
-    return rows.sort((a, b) => b.value - a.value).slice(0, 4);
+    return buildExpenseBreakdown(rows, 4);
   }, [monthStats]);
-
-  const topExpenseCategories = useMemo(
-    () => categoryTotals.filter((item) => item.value > 0).slice(0, 4),
-    [categoryTotals],
-  );
 
   const bestWeekdayInsight = useMemo(() => {
     const totalsByWeekday = new Map<string, number>();
@@ -441,7 +437,7 @@ export default function Index() {
               </View>
 
               <View style={styles.summaryCard}>
-                <Text style={styles.summaryLabel}>Saldo</Text>
+                <Text style={styles.summaryLabel}>Resultado</Text>
                 <Text style={styles.summaryNumber} numberOfLines={1}>
                   R$ {formatSignedBRL(totalCents)}
                 </Text>
@@ -496,7 +492,7 @@ export default function Index() {
                   <Text style={styles.chartMetricValue}>
                     R$ {formatSignedBRL(monthStats.netCents)}
                   </Text>
-                  <Text style={styles.chartMetricSuffix}>saldo</Text>
+                  <Text style={styles.chartMetricSuffix}>resultado</Text>
                 </View>
               </View>
 
@@ -593,30 +589,21 @@ export default function Index() {
 
             <View style={styles.insightsGrid}>
               <View style={styles.smallInsightCard}>
-                <Text style={styles.smallInsightLabel}>Projeção</Text>
+                <Text style={styles.smallInsightLabel}>
+                  {isCurrentMonth ? "Entregas (estim.)" : "Entregas realizadas"}
+                </Text>
 
-                <Text
-                  style={[
-                    styles.smallInsightValue,
-                    projection.projectedNetCents > 0
-                      ? styles.positive
-                      : projection.projectedNetCents < 0
-                        ? styles.negative
-                        : null,
-                  ]}
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                >
-                  R$ {formatSignedBRL(projection.projectedNetCents)}
+                <Text style={styles.smallInsightValue} numberOfLines={1} adjustsFontSizeToFit>
+                  R$ {formatBRL(projection.projectedRunRateIncomeCents)}
                 </Text>
 
                 <Text style={styles.smallInsightHint} numberOfLines={1}>
-                  saldo estimado
+                  {isCurrentMonth ? "média por dia do mês" : "receita registrada"}
                 </Text>
               </View>
 
               <View style={styles.smallInsightCard}>
-                <Text style={styles.smallInsightLabel}>Melhor dia</Text>
+                <Text style={styles.smallInsightLabel}>Dia da semana (receita)</Text>
 
                 {bestWeekdayInsight ? (
                   <>
@@ -637,7 +624,7 @@ export default function Index() {
               </View>
 
               <View style={styles.smallInsightCard}>
-                <Text style={styles.smallInsightLabel}>Melhor loja</Text>
+                <Text style={styles.smallInsightLabel}>Maior receita por título</Text>
 
                 {bestStoreInsight ? (
                   <>

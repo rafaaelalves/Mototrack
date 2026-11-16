@@ -1,4 +1,8 @@
-import { incomeCategoryProjectionBehavior } from "./categories";
+import { isRunRateIncomeCategory } from "./categories";
+import {
+  projectRecordedIncome,
+  type MonthlyIncomeProjection,
+} from "./projectionCore";
 import type { Transaction } from "./transaction";
 
 type MonthlyProjectionInput = {
@@ -7,71 +11,29 @@ type MonthlyProjectionInput = {
   daysInMonth: number;
 };
 
-export type MonthlyProjection = {
-  projectedIncomeCents: number;
-  projectedExpenseCents: number;
-  projectedNetCents: number;
+export type MonthlyProjection = MonthlyIncomeProjection;
 
-  runRateIncomeCents: number;
-  nonProjectedIncomeCents: number;
-
-  avgRunRateIncomePerDayCents: number;
-  avgExpensePerDayCents: number;
-};
-
+/**
+ * Estima somente a renda variável registrada como run_rate (entregas).
+ *
+ * - Salário/receitas únicas já recebidos entram no total observado, sem
+ *   extrapolação; salário ainda não lançado não é presumido.
+ * - Despesas são somente observadas: faltam vencimentos e recorrências para
+ *   produzir uma projeção honesta de saídas e de resultado final.
+ * - Uma média diária de entregas é só uma aproximação inicial, não uma
+ *   previsão baseada na disponibilidade real de turnos.
+ */
 export function calculateMonthlyProjection({
   transactions,
   elapsedDays,
   daysInMonth,
 }: MonthlyProjectionInput): MonthlyProjection {
-  const safeElapsedDays = Math.max(1, Math.min(elapsedDays, daysInMonth));
-
-  let runRateIncomeCents = 0;
-  let nonProjectedIncomeCents = 0;
-  let expenseCents = 0;
-
-  for (const transaction of transactions) {
-    if (transaction.type === "expense") {
-      expenseCents += transaction.amountCents;
-      continue;
-    }
-
-    if (!transaction.category) {
-      nonProjectedIncomeCents += transaction.amountCents;
-      continue;
-    }
-
-    const behavior = incomeCategoryProjectionBehavior(transaction.category);
-
-    if (behavior === "run_rate") {
-      runRateIncomeCents += transaction.amountCents;
-    } else {
-      nonProjectedIncomeCents += transaction.amountCents;
-    }
-  }
-
-  const avgRunRateIncomePerDayCents = runRateIncomeCents / safeElapsedDays;
-
-  const avgExpensePerDayCents = expenseCents / safeElapsedDays;
-
-  const projectedRunRateIncomeCents = Math.round(
-    avgRunRateIncomePerDayCents * daysInMonth,
-  );
-
-  const projectedIncomeCents =
-    projectedRunRateIncomeCents + nonProjectedIncomeCents;
-
-  const projectedExpenseCents = Math.round(avgExpensePerDayCents * daysInMonth);
-
-  return {
-    projectedIncomeCents,
-    projectedExpenseCents,
-    projectedNetCents: projectedIncomeCents - projectedExpenseCents,
-
-    runRateIncomeCents,
-    nonProjectedIncomeCents,
-
-    avgRunRateIncomePerDayCents,
-    avgExpensePerDayCents,
-  };
+  return projectRecordedIncome({
+    transactions,
+    elapsedDays,
+    daysInMonth,
+    isRunRateIncome: (transaction) =>
+      transaction.type === "income" &&
+      isRunRateIncomeCategory(transaction.category),
+  });
 }
