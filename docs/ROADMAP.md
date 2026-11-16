@@ -49,3 +49,18 @@
 5. Funciona offline no celular; import/export sem depender de conta.
 6. Nenhum holerite, extrato, CPF ou dado pessoal real versionado.
 7. Um PR pequeno por assunto, com registro do teste executado e riscos remanescentes.
+
+## Histórico de execução — 15/11/2026
+
+Cada alteração permanece em **Draft**, separada e sem merge na `develop`. A validação automatizada não equivale a QA visual/Android.
+
+| PR | Entrega | Testes |
+|---|---|---|
+| [#7](https://github.com/rafaaelalves/Mototrack/pull/7) | Migrações versionadas de SQLite e documentação | SQL Node + TypeScript, CI aprovado |
+| [#8](https://github.com/rafaaelalves/Mototrack/pull/8) | Backup com validação, restauração transacional e cópia de recuperação | Testes unitários + TypeScript, CI aprovado |
+| [#9](https://github.com/rafaaelalves/Mototrack/pull/9) | Gráfico de despesas completo e nomenclatura honesta de indicadores | 6 testes de agrupamento + TypeScript, CI aprovado |
+| [#10](https://github.com/rafaaelalves/Mototrack/pull/10) | Projeção limitada à receita de entregas, sem prever despesa pontual ou saldo bancário fictício | 7 testes de projeção + TypeScript, CI aprovado |
+
+**Importante:** #7, #8, #9 e #10 partem independentemente de `develop` e cada um introduz seu próprio comando de teste e workflow de CI. Ao integrar, reconciliar uma única configuração de testes e conferir compatibilidade com o conjunto. Não misturar branches em massa sem revisão.
+
+**Próximos passos:** verificar compatibilidade combinada; QA de banco/restauração com dados fictícios no Android; conferir o dashboard visualmente; então considerar finalização da Fase 0 e desenho das entidades da Fase 1.
