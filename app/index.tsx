@@ -593,25 +593,16 @@ export default function Index() {
 
             <View style={styles.insightsGrid}>
               <View style={styles.smallInsightCard}>
-                <Text style={styles.smallInsightLabel}>Projeção</Text>
+                <Text style={styles.smallInsightLabel}>
+                  {isCurrentMonth ? "Entregas (estim.)" : "Entregas realizadas"}
+                </Text>
 
-                <Text
-                  style={[
-                    styles.smallInsightValue,
-                    projection.projectedNetCents > 0
-                      ? styles.positive
-                      : projection.projectedNetCents < 0
-                        ? styles.negative
-                        : null,
-                  ]}
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                >
-                  R$ {formatSignedBRL(projection.projectedNetCents)}
+                <Text style={styles.smallInsightValue} numberOfLines={1} adjustsFontSizeToFit>
+                  R$ {formatBRL(projection.projectedRunRateIncomeCents)}
                 </Text>
 
                 <Text style={styles.smallInsightHint} numberOfLines={1}>
-                  saldo estimado
+                  {isCurrentMonth ? "média por dia do mês" : "receita registrada"}
                 </Text>
               </View>
 
