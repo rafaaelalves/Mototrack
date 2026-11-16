@@ -21,7 +21,6 @@ type Datum = {
   incomePrevious: number | null;
   expensePrevious: number | null;
   incomeProjected: number | null;
-  expenseProjected: number | null;
 };
 
 function daysInMonth(year: number, month1to12: number) {
@@ -144,19 +143,12 @@ export function MonthlyIncomeExpenseChart({
 
       let incomeProjected: number | null = null;
 
-      let expenseProjected: number | null = null;
-
       if (isSelectedCurrentMonth && day >= safeLastActualDay) {
         const projectedDaysAfterStart = day - safeLastActualDay;
 
         incomeProjected =
           (currentIncomeAcc[safeLastActualDay - 1] +
             projection.avgRunRateIncomePerDayCents * projectedDaysAfterStart) /
-          100;
-
-        expenseProjected =
-          (currentExpenseAcc[safeLastActualDay - 1] +
-            projection.avgExpensePerDayCents * projectedDaysAfterStart) /
           100;
       }
       return {
@@ -166,7 +158,6 @@ export function MonthlyIncomeExpenseChart({
         incomePrevious: previousIncomeValue,
         expensePrevious: previousExpenseValue,
         incomeProjected,
-        expenseProjected,
       };
     });
   }, [currentTransactions, previousTransactions, year, month]);
@@ -177,8 +168,7 @@ export function MonthlyIncomeExpenseChart({
       (item.expenseCurrent ?? 0) > 0 ||
       (item.incomePrevious ?? 0) > 0 ||
       (item.expensePrevious ?? 0) > 0 ||
-      (item.incomeProjected ?? 0) > 0 ||
-      (item.expenseProjected ?? 0) > 0,
+      (item.incomeProjected ?? 0) > 0,
   );
 
   if (!font) return null;
@@ -203,7 +193,6 @@ export function MonthlyIncomeExpenseChart({
             "incomePrevious",
             "expensePrevious",
             "incomeProjected",
-            "expenseProjected",
           ]}
           xAxis={{
             font,
@@ -220,7 +209,6 @@ export function MonthlyIncomeExpenseChart({
                 "incomePrevious",
                 "expensePrevious",
                 "incomeProjected",
-                "expenseProjected",
               ],
               font,
               tickCount: 4,
@@ -275,16 +263,6 @@ export function MonthlyIncomeExpenseChart({
                   <DashPathEffect intervals={[10, 5]} />
                 </Line>
               ) : null}
-              {visibleSeries.current ? (
-                <Line
-                  points={points.expenseProjected}
-                  strokeWidth={2}
-                  color="#FF6A61"
-                  animate={{ type: "timing", duration: 250 }}
-                >
-                  <DashPathEffect intervals={[10, 5]} />
-                </Line>
-              ) : null}
             </>
           )}
         </CartesianChart>
@@ -301,6 +279,12 @@ export function MonthlyIncomeExpenseChart({
           <Text style={styles.legendText}>Saídas</Text>
         </View>
       </View>
+      {year === new Date().getFullYear() && month === new Date().getMonth() + 1 ? (
+        <Text style={styles.projectionNote}>
+          Linha pontilhada: tendência linear das entregas registradas.
+          Não prevê despesas futuras nem salário ainda não lançado.
+        </Text>
+      ) : null}
     </View>
   );
 }
@@ -344,6 +328,13 @@ const styles = StyleSheet.create({
   legendText: {
     fontSize: 12,
     color: "rgba(255,255,255,0.58)",
+  },
+  projectionNote: {
+    marginTop: 8,
+    fontSize: 10,
+    lineHeight: 14,
+    color: "rgba(255,255,255,0.50)",
+    textAlign: "center",
   },
 
   emptyContainer: {

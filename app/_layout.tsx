@@ -1,4 +1,5 @@
 import { AppBackground } from "@/src/ui/AppBackground";
+import { migrateDatabase } from "@/src/db/migrations";
 import {
   Nunito_400Regular,
   Nunito_600SemiBold,
@@ -6,32 +7,10 @@ import {
 } from "@expo-google-fonts/nunito";
 import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
-import { SQLiteProvider, type SQLiteDatabase } from "expo-sqlite";
+import { SQLiteProvider } from "expo-sqlite";
 import { useEffect } from "react";
 import { Text, TextInput } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-
-async function initDB(db: SQLiteDatabase) {
-  // Habilita o WAL (Write-Ahead Logging) para melhor performance e segurança
-  await db.execAsync(`PRAGMA journal_mode = WAL;`);
-
-  // Cria a tabela de transações se não existir
-  await db.execAsync(`
-    CREATE TABLE IF NOT EXISTS transactions (
-      id INTEGER PRIMARY KEY NOT NULL,
-      dateISO TEXT NOT NULL,
-      type TEXT NOT NULL, -- 'income' ou 'expense'
-      amountCents INTEGER NOT NULL,
-      title TEXT NOT NULL,
-      createdAt INTEGER NOT NULL,
-      updatedAt INTEGER NOT NULL,
-      deletedAt INTEGER,
-      notes TEXT,
-      category TEXT,
-      distanceMeters INTEGER
-    );
-  `);
-}
 
 export default function RootLayout() {
   const [fontsLoaded] = useFonts({
@@ -75,7 +54,7 @@ export default function RootLayout() {
     <>
       <AppBackground />
       <SafeAreaProvider>
-        <SQLiteProvider databaseName="painel_v2.db" onInit={initDB}>
+        <SQLiteProvider databaseName="painel_v2.db" onInit={migrateDatabase}>
           <Stack
             screenOptions={{
               headerShown: false,
