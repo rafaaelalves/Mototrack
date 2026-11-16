@@ -1,6 +1,6 @@
 # Checklist de QA — primeira migração do SQLite
 
-**Status:** pendente de execução em ambiente de desenvolvimento e dispositivo. Não declarar testado só por criar código.
+**Status:** testes SQL automatizados adicionados em `tests/migrations.test.mjs` usando SQLite real do Node 22. A execução no Android/Expo ainda está pendente. Não considerar o teste Node como substituto de QA de aparelho.
 
 ## Casos obrigatórios
 1. **Banco vazio:** instalação nova cria `transactions` com todas as colunas; `PRAGMA user_version` retorna 1; inserir e listar transações normalmente.
@@ -20,3 +20,11 @@
 
 ## Risco remanescente
 A primeira mudança cobre **somente migrações**. A lógica atual de importação JSON que substitui todos os lançamentos ainda precisa ser reforçada, em PR seguinte. Não realizar restauração destrutiva sobre dados únicos antes desse trabalho.
+
+## Testes automáticos disponíveis
+```sh
+npm ci
+npm run test:unit
+npx tsc --noEmit
+```
+A suíte cobre criação do banco, migração legado, idempotência, recusa de versões futuras/esquemas incompatíveis e rollback transacional sob erro SQL. A API Expo ainda precisa ser exercitada no Android.
