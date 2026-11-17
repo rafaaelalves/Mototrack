@@ -47,6 +47,21 @@ export default function Settings() {
       </View>
 
       <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Importar extrato Nubank</Text>
+        <Text style={styles.sectionSubtitle}>
+          Leia o CSV da conta Nubank, detecte movimentações repetidas e
+          classifique com calma antes de adicionar ao Mototrack.
+          O arquivo do cartão usa outro formato e ainda não é suportado.
+        </Text>
+        <Pressable
+          style={styles.secondaryBtn}
+          onPress={() => router.push("/import/nubank")}
+        >
+          <Text style={styles.secondaryBtnText}>Importar e revisar CSV</Text>
+        </Pressable>
+      </View>
+
+      <View style={styles.section}>
         <Text style={styles.sectionTitle}>Sincronização em nuvem</Text>
         <Text style={styles.sectionSubtitle}>
           Em versões futuras, você poderá conectar sua conta (como Google Drive)
