@@ -94,6 +94,15 @@ export default function RootLayout() {
               }}
             />
             <Stack.Screen
+              name="import/nubank"
+              options={{
+                presentation: "card",
+                headerShown: false,
+                animation: "fade",
+                contentStyle: { backgroundColor: "transparent" },
+              }}
+            />
+            <Stack.Screen
               name="transactions"
               options={{
                 presentation: "card",
