@@ -6,7 +6,7 @@ import {
   Switch, Text, View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { ExpenseCategoryOptions, IncomeCategoryOptions } from "@/src/domain/categories";
+import { ExpenseCategoryOptions, IncomeCategoryOptions, type ExpenseCategory, type IncomeCategory } from "@/src/domain/categories";
 import type { ImportAction } from "@/src/domain/nubankCsv";
 import {
   getNubankReviewQueue, reviewNubankImport,
@@ -87,7 +87,7 @@ export default function NubankCsvImportScreen() {
       const result = await reviewNubankImport(db, {
         itemId: item.id,
         action,
-        category: action === "import" ? category as never : null,
+        category: action === "import" ? (category as ExpenseCategory | IncomeCategory | null) : null,
         applyToSimilar: similar,
         rememberRule: remember,
       });
@@ -204,6 +204,13 @@ export default function NubankCsvImportScreen() {
               </Text>
               <Text style={styles.title}>{item.description}</Text>
               <Text style={styles.hint}>{actionHint}</Text>
+              {item.ruleAction || item.suggestedAction ? (
+                <Text style={styles.hint}>
+                  Ação sugerida: {suggestedAction === "transfer" ? "Transferência"
+                    : suggestedAction === "ignore" ? "Ignorar" : "Importar"}.
+                  A aprovação continua sendo manual.
+                </Text>
+              ) : null}
               {item.similarCount > 0 ? (
                 <Text style={styles.warning}>
                   Possível duplicata manual: {item.similarCount} lançamento(s) com mesma data, valor e tipo.
