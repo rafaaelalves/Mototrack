@@ -185,6 +185,24 @@ export async function reviewBankItemCore(
       )
     : [source];
 
+  // Nunca importar um lote inteiro se algum item tiver possível duplicata
+  // manual. O usuário pode revisá-los individualmente antes de confirmar.
+  if (decision.applyToSimilar && decision.action === "import") {
+    for (const row of selected) {
+      const match = await db.getFirstAsync<{ total: number }>(
+        "SELECT COUNT(*) AS total FROM transactions WHERE deletedAt IS NULL " +
+        "AND dateISO=? AND type=? AND amountCents=?;",
+        [row.dateISO, row.type, row.amountCents],
+      );
+      if ((match?.total ?? 0) > 0) {
+        throw new Error(
+          "Há possíveis duplicatas no grupo. Desmarque 'Aplicar às semelhantes' " +
+          "e revise esses lançamentos individualmente.",
+        );
+      }
+    }
+  }
+
   const now = Date.now();
   const rowIds: number[] = [];
   for (const row of selected) {
