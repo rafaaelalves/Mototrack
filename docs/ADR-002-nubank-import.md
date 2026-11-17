@@ -51,11 +51,13 @@ Popular o Mototrack a partir de CSV da **conta Nubank**, sem digitar manualmente
 
 Os exemplos de testes são inteiramente fictícios, sem nomes reais, transações, CPFs, CNPJs ou contas bancárias. Nenhum extrato do titular foi versionado. O CSV é lido localmente, não é transmitido pelo aplicativo e o arquivo original não é gravado pelo importador em armazenamento permanente.
 
-## Limitação conhecida de backup v1
+## Backup JSON v2 e restauração
 
-O backup JSON v1 do Mototrack inclui somente `transactions`, não a nova fila de importação e nem as regras. Por compatibilidade, a importação grava uma referência de origem (ID bancário, sem número da conta) no campo `notes` de cada transação aprovada. Isso ajuda a reconhecer lançamentos anteriormente importados após restaurar um backup v1 e reimportar o CSV.
+O exportador grava **versão 2** incluindo `transactions`, `bankImportRows` e `bankImportRules`. Antes de substituir o banco, a restauração valida registros, IDs, referências entre tabelas, categorias, versões e regras duplicadas. As substituições ocorrem numa única transação SQL, com cópia de recuperação local gerada e verificada antes da escrita.
 
-**Entretanto, decisões pendentes/ignoradas e regras salvas não sobrevivem integralmente ao backup v1.** Antes de declarar essa funcionalidade pronta para release, implementar e testar o backup JSON v2 abrangendo fila e regras, preservando importação de backups v1. Não assumir que o backup antigo seja completo para dados novos.
+Backups **v1 antigos continuam aceitos**. Como não possuem filas nem regras, ao restaurá-los essas informações não existem no backup e não podem ser recuperadas dele. O aplicativo avisa antes de continuar e gera uma cópia v2 do estado atual. Um ID bancário é salvo na nota das transações aprovadas, permitindo reconstruir o estado importado caso o CSV seja reprocessado após uma restauração v1.
+
+A cópia local deve ser compartilhada com um armazenamento fora do aplicativo para sobreviver a uma desinstalação. Importar extrato e restaurar backup são operações diferentes; importar CSV nunca apaga o banco.
 
 ## Verificações automatizadas
 
@@ -74,11 +76,10 @@ O backup JSON v1 do Mototrack inclui somente `transactions`, não a nova fila de
 
 ## Próximas iterações
 
-1. Backup JSON v2 da fila e regras.
-2. Listagem com filtros e busca, reclassificação de ignorados, gestão de regras (editar/excluir).
-3. Importação de **fatura do cartão** com data, competência, parcelamentos, estornos e conciliação com pagamento da fatura, sem dupla contagem.
-4. Detecção assistida de possíveis duplicatas manuais (heurística revisável, nunca exclusão automática).
-5. Identificação de operações entre contas próprias, reembolsos e repasses de plataformas com opção de conciliação.
-6. Importação de OFX e outros bancos mediante módulos específicos (não presumir universalidade do CSV).
+1. Listagem com filtros e busca, reclassificação de ignorados, gestão de regras (editar/excluir).
+2. Importação de **fatura do cartão** com data, competência, parcelamentos, estornos e conciliação com pagamento da fatura, sem dupla contagem.
+3. Detecção assistida de possíveis duplicatas manuais (heurística revisável, nunca exclusão automática).
+4. Identificação de operações entre contas próprias, reembolsos e repasses de plataformas com opção de conciliação.
+5. Importação de OFX e outros bancos mediante módulos específicos (não presumir universalidade do CSV).
 
 **Não sugerimos integração bancária via credenciais nem coleta de senha.**
