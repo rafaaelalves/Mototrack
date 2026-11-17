@@ -133,7 +133,7 @@ export async function countPendingCore(db: SqlConnection): Promise<number> {
 export async function reviewBankItemCore(
   db: SqlConnection,
   decision: ReviewDecision,
-): Promise<{ reviewed: number; lastId: number }> {
+): Promise<{ reviewed: number; rowIds: number[] }> {
   if (!Number.isSafeInteger(decision.itemId) || decision.itemId < 1) {
     throw new Error("Identificador de revisão inválido.");
   }
@@ -156,7 +156,7 @@ export async function reviewBankItemCore(
     : [source];
 
   const now = Date.now();
-  let lastId = source.id;
+  const rowIds: number[] = [];
   for (const row of selected) {
     let transactionId: number | null = null;
     if (decision.action === "import") {
@@ -175,7 +175,7 @@ export async function reviewBankItemCore(
         transactionId, now, row.id],
     );
     if (updated.changes !== 1) throw new Error("Conflito na revisão. Operação cancelada.");
-    lastId = row.id;
+    rowIds.push(row.id);
   }
 
   if (decision.rememberRule) {
@@ -187,7 +187,7 @@ export async function reviewBankItemCore(
         decision.action === "import" ? decision.category : null, now],
     );
   }
-  return { reviewed: selected.length, lastId };
+  return { reviewed: selected.length, rowIds };
 }
 
 /** Desfaz somente revisão cujo lançamento gerado ainda não foi alterado. */
