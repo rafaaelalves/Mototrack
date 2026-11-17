@@ -4,7 +4,8 @@ import type {
   ImportStatus,
   NubankAccountRow,
 } from "../domain/nubankCsv";
-import { NUBANK_ACCOUNT_SOURCE } from "../domain/nubankCsv";
+// Separado do parser para permitir testes Node sem resolver imports TS sem extensão.
+const NUBANK_ACCOUNT_SOURCE = "nubank-account";
 import type { ExpenseCategory, IncomeCategory } from "../domain/categories";
 import type { TransactionType } from "../domain/transaction";
 
