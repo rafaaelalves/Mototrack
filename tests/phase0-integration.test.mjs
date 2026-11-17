@@ -75,7 +75,7 @@ test("banco novo: restauração preserva centavos, distância, categoria e exclu
       [2, 3500, "fuel", 42000, 1700000000500],
     ],
   );
-  assert.equal(sqlite.prepare("PRAGMA user_version;").get().user_version, 1);
+  assert.equal(sqlite.prepare("PRAGMA user_version;").get().user_version, 2);
 });
 
 test("banco legado: migração e restauração de backup v1 antigo funcionam juntas", async (t) => {
