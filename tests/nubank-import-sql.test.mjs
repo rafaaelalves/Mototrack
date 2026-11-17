@@ -150,3 +150,25 @@ test("após edição manual não desfaz uma importação apagando alterações d
   );
   assert.equal(countActive(sqlite),1);
 });
+
+test("backup v1 pode recuperar ID de importação pela nota sem duplicar receitas", async (t) => {
+  const { sqlite, db } = setup(t);
+  await migrateDatabase(db);
+  const sample = parseNubankAccountCsv(header + pix(5, "119.00", "FICTÍCIA"));
+  await atomic(sqlite, () => stageNubankRowsCore(db, sample));
+  const pending = (await listBankImportItemsCore(db))[0];
+  await atomic(sqlite, () => reviewBankItemCore(db, {
+    itemId: pending.id, action: "import", category: "delivery",
+    applyToSimilar: false, rememberRule: false,
+  }));
+  assert.equal(countActive(sqlite), 1);
+  const note = sqlite.prepare("SELECT notes FROM transactions;").get().notes;
+  assert.equal(note, "mototrack:nubank-account:" + uuid(5));
+
+  // Simula versão v1 do backup: transações preservadas, fila de importação ausente.
+  sqlite.exec("DELETE FROM bank_import_rows;");
+  const stage = await atomic(sqlite, () => stageNubankRowsCore(db, sample));
+  assert.deepEqual(stage, { created: 0, repeated: 1 });
+  assert.equal(await countPendingCore(db), 0);
+  assert.equal(countActive(sqlite), 1);
+});
