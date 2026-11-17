@@ -5,10 +5,39 @@ import type { Transaction } from "./transaction";
  * podem omitir campos que ainda não existiam, mas nenhum valor inválido
  * pode chegar ao banco de dados.
  */
+export type BankImportBackupRow = {
+  id: number;
+  source: string;
+  sourceId: string;
+  dateISO: string;
+  type: "income" | "expense";
+  amountCents: number;
+  description: string;
+  merchantKey: string;
+  suggestedCategory: string | null;
+  suggestedAction: "import" | "ignore" | "transfer" | null;
+  status: "pending" | "imported" | "ignored" | "transfer";
+  category: string | null;
+  transactionId: number | null;
+  createdAt: number;
+  updatedAt: number;
+};
+export type BankImportRuleBackup = {
+  id: number;
+  source: string;
+  merchantKey: string;
+  type: "income" | "expense";
+  action: "import" | "ignore" | "transfer";
+  category: string | null;
+  updatedAt: number;
+};
+
 export type BackupFile = {
-  version: 1;
+  version: 1 | 2;
   exportedAt: number;
   transactions: Transaction[];
+  bankImportRows: BankImportBackupRow[];
+  bankImportRules: BankImportRuleBackup[];
 };
 
 const validIncomeCategories = new Set(["salary", "delivery", "one_off"]);
@@ -126,14 +155,116 @@ function parseTransaction(value: unknown, index: number): Transaction {
   } as Transaction;
 }
 
+
+const actions = new Set(["import", "ignore", "transfer"]);
+const statuses = new Set(["pending", "imported", "ignored", "transfer"]);
+
+function nonemptyText(value: unknown, label: string, max: number): string {
+  if (typeof value !== "string" || !value.trim() || value.length > max) {
+    throw new Error(label + " precisa ser um texto válido.");
+  }
+  return value;
+}
+
+function validBankType(value: unknown, label: string): "income" | "expense" {
+  if (value !== "income" && value !== "expense") {
+    throw new Error(label + ": tipo inválido.");
+  }
+  return value;
+}
+
+function validBankCategory(
+  category: unknown,
+  type: "income" | "expense",
+  label: string,
+): string | null {
+  if (category === null || category === undefined) return null;
+  if (typeof category !== "string") throw new Error(label + ": categoria inválida.");
+  const allowed = type === "income" ? validIncomeCategories : validExpenseCategories;
+  if (!allowed.has(category)) throw new Error(label + ": categoria desconhecida.");
+  return category;
+}
+
+function validBankAction(
+  value: unknown,
+  label: string,
+  optional: boolean,
+): "import" | "ignore" | "transfer" | null {
+  if (optional && (value === null || value === undefined)) return null;
+  if (typeof value !== "string" || !actions.has(value)) {
+    throw new Error(label + ": ação inválida.");
+  }
+  return value as "import" | "ignore" | "transfer";
+}
+
+function parseBankRow(value: unknown, index: number): BankImportBackupRow {
+  const label = "Movimentação bancária " + (index + 1);
+  const row = objectAt(value, label);
+  const source = nonemptyText(row.source, label + " origem", 50);
+  if (source !== "nubank-account") throw new Error(label + ": banco não suportado.");
+  const sourceId = nonemptyText(row.sourceId, label + " identificador", 100);
+  if (!/^[a-z0-9][a-z0-9_-]{7,99}$/i.test(sourceId)) {
+    throw new Error(label + ": identificador externo inválido.");
+  }
+  const type = validBankType(row.type, label);
+  const status = row.status;
+  if (typeof status !== "string" || !statuses.has(status)) {
+    throw new Error(label + ": estado inválido.");
+  }
+  const transactionId = optionalInteger(row.transactionId, label + " vínculo");
+  if (status === "imported" && transactionId === null) {
+    throw new Error(label + ": importado sem vínculo com transação.");
+  }
+  return {
+    id: integerAt(row.id, label + " id", 1),
+    source,
+    sourceId,
+    dateISO: validISODate(row.dateISO, label + " data"),
+    type,
+    amountCents: integerAt(row.amountCents, label + " valor", 1),
+    description: nonemptyText(row.description, label + " descrição", 500),
+    merchantKey: nonemptyText(row.merchantKey, label + " chave", 250),
+    suggestedCategory: validBankCategory(row.suggestedCategory, type, label),
+    suggestedAction: validBankAction(row.suggestedAction, label, true),
+    status: status as BankImportBackupRow["status"],
+    category: validBankCategory(row.category, type, label),
+    transactionId,
+    createdAt: integerAt(row.createdAt, label + " criação"),
+    updatedAt: integerAt(row.updatedAt, label + " atualização"),
+  };
+}
+
+function parseBankRule(value: unknown, index: number): BankImportRuleBackup {
+  const label = "Regra " + (index + 1);
+  const row = objectAt(value, label);
+  const source = nonemptyText(row.source, label + " origem", 50);
+  if (source !== "nubank-account") throw new Error(label + ": banco não suportado.");
+  const type = validBankType(row.type, label);
+  const action = validBankAction(row.action, label, false);
+  if (action === null) throw new Error(label + ": regra sem ação.");
+  const category = validBankCategory(row.category, type, label);
+  if (action === "import" && type === "income" && category === null) {
+    throw new Error(label + ": categoria de entrada obrigatória.");
+  }
+  return {
+    id: integerAt(row.id, label + " id", 1),
+    source,
+    merchantKey: nonemptyText(row.merchantKey, label + " chave", 250),
+    type,
+    action,
+    category,
+    updatedAt: integerAt(row.updatedAt, label + " atualização"),
+  };
+}
+
 /**
  * Faz validação completa ANTES de qualquer DELETE/INSERT.
  * O objeto retornado contém cópias normalizadas dos lançamentos.
  */
 export function parseBackupFile(input: unknown): BackupFile {
   const file = objectAt(input, "O backup");
-  if (file.version !== 1) {
-    throw new Error("Versão de backup incompatível. Esperada: 1.");
+  if (file.version !== 1 && file.version !== 2) {
+    throw new Error("Versão de backup incompatível. Esperadas: 1 ou 2.");
   }
   const exportedAt = integerAt(file.exportedAt, "Data de exportação");
   if (!Array.isArray(file.transactions)) {
@@ -151,5 +282,37 @@ export function parseBackupFile(input: unknown): BackupFile {
     ids.add(transaction.id);
     return transaction;
   });
-  return { version: 1, exportedAt, transactions };
+  if (file.version === 1) {
+    return { version: 1, exportedAt, transactions, bankImportRows: [], bankImportRules: [] };
+  }
+  if (!Array.isArray(file.bankImportRows) || !Array.isArray(file.bankImportRules)) {
+    throw new Error("Backup v2 precisa conter a fila de extratos e as regras.");
+  }
+
+  const rows = file.bankImportRows.map((value, i) => parseBankRow(value, i));
+  const rules = file.bankImportRules.map((value, i) => parseBankRule(value, i));
+  const rowIds = new Set<number>(), externalIds = new Set<string>();
+  const ruleIds = new Set<number>(), ruleKeys = new Set<string>();
+
+  for (const row of rows) {
+    const external = row.source + ":" + row.sourceId;
+    if (rowIds.has(row.id) || externalIds.has(external)) {
+      throw new Error("Movimentação duplicada no backup v2.");
+    }
+    rowIds.add(row.id);
+    externalIds.add(external);
+    if (row.transactionId !== null && !ids.has(row.transactionId)) {
+      throw new Error("Movimentação aponta para transação ausente no backup.");
+    }
+  }
+  for (const rule of rules) {
+    const key = rule.source + ":" + rule.merchantKey + ":" + rule.type;
+    if (ruleIds.has(rule.id) || ruleKeys.has(key)) {
+      throw new Error("Regra duplicada no backup v2.");
+    }
+    ruleIds.add(rule.id);
+    ruleKeys.add(key);
+  }
+
+  return { version: 2, exportedAt, transactions, bankImportRows: rows, bankImportRules: rules };
 }

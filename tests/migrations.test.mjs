@@ -70,7 +70,7 @@ test("schema legado recebe colunas sem alterar ID e valor monetário", async (t)
   assert.equal(item.deletedAt, null);
   assert.equal(item.notes, null);
   assert.equal(item.distanceMeters, null);
-  assert.equal(sqlite.prepare("PRAGMA user_version;").get().user_version, 1);
+  assert.equal(sqlite.prepare("PRAGMA user_version;").get().user_version, 2);
 });
 
 test("migração é idempotente e mantém exclusões lógicas", async (t) => {
@@ -115,4 +115,19 @@ test("erro ao criar índice reverte ALTER TABLE e versão", async (t) => {
   const cols = sqlite.prepare("PRAGMA table_info(transactions);").all().map((c) => c.name);
   assert.deepEqual(cols, ["id","dateISO","type","amountCents","title","createdAt"]);
   assert.equal(sqlite.prepare("SELECT amountCents FROM transactions;").get().amountCents, 11900);
+});
+
+test("banco v1 evolui para importação v2 sem alterar transações", async (t) => {
+  const { db, sqlite } = makeDatabase(legacy);
+  t.after(() => sqlite.close());
+  await migrateDatabase(db);
+  const before = sqlite.prepare("SELECT id, amountCents FROM transactions;").get();
+  sqlite.exec("PRAGMA user_version=1;");
+  await migrateDatabase(db);
+  const after = sqlite.prepare("SELECT id, amountCents FROM transactions;").get();
+  assert.deepEqual(after, before);
+  assert.equal(sqlite.prepare("PRAGMA user_version;").get().user_version, 2);
+  for (const name of ["bank_import_rows", "bank_import_rules"]) {
+    assert.ok(sqlite.prepare("SELECT name FROM sqlite_master WHERE name=?;").get(name));
+  }
 });

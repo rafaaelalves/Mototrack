@@ -1,5 +1,8 @@
 import { Platform } from "react-native";
-import { parseBackupFile, type BackupFile } from "@/src/domain/backupValidation";
+import {
+  parseBackupFile, type BackupFile,
+  type BankImportBackupRow, type BankImportRuleBackup,
+} from "@/src/domain/backupValidation";
 import type { Transaction } from "@/src/domain/transaction";
 import type { SQLiteDatabase } from "expo-sqlite";
 import { replaceTransactions } from "./restoreCore";
@@ -12,10 +15,19 @@ export async function buildBackup(db: SQLiteDatabase): Promise<BackupFile> {
     `SELECT * FROM transactions ORDER BY dateISO DESC, createdAt DESC;`,
   );
 
+  const bankImportRows = await db.getAllAsync<BankImportBackupRow>(
+    "SELECT * FROM bank_import_rows ORDER BY id;",
+  );
+  const bankImportRules = await db.getAllAsync<BankImportRuleBackup>(
+    "SELECT * FROM bank_import_rules ORDER BY id;",
+  );
+
   return parseBackupFile({
-    version: 1,
+    version: 2,
     exportedAt: Date.now(),
     transactions: rows,
+    bankImportRows,
+    bankImportRules,
   });
 }
 

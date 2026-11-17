@@ -1,8 +1,12 @@
 name: Validacao do Mototrack
 on:
+  push:
+    branches:
+      - feat/nubank-csv-import
   pull_request:
     branches:
       - develop
+      - integration/phase0
   workflow_dispatch:
 
 jobs:

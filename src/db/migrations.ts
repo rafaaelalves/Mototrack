@@ -7,7 +7,7 @@ import type { SQLiteDatabase } from "expo-sqlite";
  * antigo criado antes da adoção do PRAGMA user_version. Nunca apagamos
  * dados para "corrigir" uma migração.
  */
-export const DATABASE_VERSION = 1;
+export const DATABASE_VERSION = 2;
 
 const REQUIRED_LEGACY_COLUMNS = [
   "id",
@@ -51,6 +51,7 @@ export async function migrateDatabase(db: SQLiteDatabase): Promise<void> {
   // Chamado pelo SQLiteProvider.onInit, antes da renderização dos consumidores.
   // Versão do schema e alterações devem ser confirmadas no mesmo commit SQL.
   await db.withTransactionAsync(async () => {
+    if (version.user_version < 1) {
     await db.execAsync(`
       CREATE TABLE IF NOT EXISTS transactions (
         id INTEGER PRIMARY KEY NOT NULL,
@@ -105,5 +106,46 @@ export async function migrateDatabase(db: SQLiteDatabase): Promise<void> {
         ON transactions(deletedAt, dateISO);
       PRAGMA user_version = 1;
     `);
+    }
+
+    if (version.user_version < 2) {
+      // Extratos bancários nunca entram diretamente no dashboard.
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS bank_import_rows (
+          id INTEGER PRIMARY KEY NOT NULL,
+          source TEXT NOT NULL,
+          sourceId TEXT NOT NULL,
+          dateISO TEXT NOT NULL,
+          type TEXT NOT NULL CHECK (type IN ('income','expense')),
+          amountCents INTEGER NOT NULL CHECK (amountCents > 0),
+          description TEXT NOT NULL,
+          merchantKey TEXT NOT NULL,
+          suggestedCategory TEXT,
+          suggestedAction TEXT,
+          status TEXT NOT NULL DEFAULT 'pending'
+            CHECK (status IN ('pending','imported','ignored','transfer')),
+          category TEXT,
+          transactionId INTEGER,
+          createdAt INTEGER NOT NULL,
+          updatedAt INTEGER NOT NULL,
+          UNIQUE(source, sourceId)
+        );
+        CREATE INDEX IF NOT EXISTS idx_bank_import_pending
+          ON bank_import_rows(source, status, dateISO);
+        CREATE INDEX IF NOT EXISTS idx_bank_import_merchant
+          ON bank_import_rows(source, merchantKey, type, status);
+        CREATE TABLE IF NOT EXISTS bank_import_rules (
+          id INTEGER PRIMARY KEY NOT NULL,
+          source TEXT NOT NULL,
+          merchantKey TEXT NOT NULL,
+          type TEXT NOT NULL CHECK (type IN ('income','expense')),
+          action TEXT NOT NULL CHECK (action IN ('import','ignore','transfer')),
+          category TEXT,
+          updatedAt INTEGER NOT NULL,
+          UNIQUE(source, merchantKey, type)
+        );
+        PRAGMA user_version = 2;
+      `);
+    }
   });
 }

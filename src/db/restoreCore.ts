@@ -16,6 +16,17 @@ const INSERT_TRANSACTION = `
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 `;
 
+
+const INSERT_BANK_ROW =
+  "INSERT INTO bank_import_rows (" +
+  "id, source, sourceId, dateISO, type, amountCents, description, merchantKey, " +
+  "suggestedCategory, suggestedAction, status, category, transactionId, createdAt, updatedAt) " +
+  "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);";
+
+const INSERT_BANK_RULE =
+  "INSERT INTO bank_import_rules (" +
+  "id, source, merchantKey, type, action, category, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?);";
+
 export async function replaceTransactions(
   connection: RestoreConnection,
   data: BackupFile,
@@ -24,13 +35,20 @@ export async function replaceTransactions(
     "SELECT COUNT(*) AS count FROM transactions;",
   );
 
-  // Mesmo um backup vazio corretamente formatado não pode apagar dados.
-  if (data.transactions.length === 0 && (existing?.count ?? 0) > 0) {
+  const pending = await connection.getFirstAsync<{ count: number }>(
+    "SELECT COUNT(*) AS count FROM bank_import_rows;",
+  );
+  if (data.transactions.length === 0 && data.bankImportRows.length === 0 &&
+      ((existing?.count ?? 0) > 0 || (pending?.count ?? 0) > 0)) {
     throw new Error(
-      "O backup não contém lançamentos e não pode substituir um banco com dados.",
+      "O backup está vazio e não pode substituir um banco com dados.",
     );
   }
 
+  // Todos os objetos foram validados ANTES desta transação.
+  // As tabelas de estágio referenciam os IDs das transações.
+  await connection.runAsync("DELETE FROM bank_import_rows;");
+  await connection.runAsync("DELETE FROM bank_import_rules;");
   await connection.runAsync("DELETE FROM transactions;");
   for (const t of data.transactions) {
     await connection.runAsync(INSERT_TRANSACTION, [
@@ -45,6 +63,20 @@ export async function replaceTransactions(
       t.notes,
       t.category,
       t.distanceMeters,
+    ]);
+  }
+  for (const row of data.bankImportRows) {
+    await connection.runAsync(INSERT_BANK_ROW, [
+      row.id, row.source, row.sourceId, row.dateISO, row.type,
+      row.amountCents, row.description, row.merchantKey,
+      row.suggestedCategory, row.suggestedAction, row.status,
+      row.category, row.transactionId, row.createdAt, row.updatedAt,
+    ]);
+  }
+  for (const rule of data.bankImportRules) {
+    await connection.runAsync(INSERT_BANK_RULE, [
+      rule.id, rule.source, rule.merchantKey, rule.type, rule.action,
+      rule.category, rule.updatedAt,
     ]);
   }
 }
