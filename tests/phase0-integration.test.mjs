@@ -137,7 +137,7 @@ test("arquivo vazio não pode substituir um banco com registros", async (t) => {
   await restore(connection, sqlite, backup([row(1, 9000)]));
   await assert.rejects(
     () => restore(connection, sqlite, backup([])),
-    /não contém lançamentos/,
+    /backup está vazio/,
   );
   assert.equal(sqlite.prepare("SELECT COUNT(*) AS total FROM transactions;").get().total, 1);
 });
