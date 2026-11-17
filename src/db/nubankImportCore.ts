@@ -46,7 +46,11 @@ const IMPORT_TRANSACTION =
   "INSERT INTO transactions (" +
   "dateISO, type, amountCents, title, createdAt, updatedAt, deletedAt, " +
   "notes, category, distanceMeters) " +
-  "VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL);";
+  "VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL);";
+
+function provenance(sourceId: string): string {
+  return "mototrack:nubank-account:" + sourceId;
+}
 
 const ALLOWED_INCOME = new Set(["salary", "delivery", "one_off"]);
 const ALLOWED_EXPENSE = new Set(["fuel", "food", "maintenance", "vehicle", "health", "other"]);
@@ -89,6 +93,32 @@ export async function stageNubankRowsCore(
         throw new Error("Conflito: identificador " + row.sourceId +
           " já existe com outros dados. Nenhum registro foi alterado.");
       }
+      repeated++;
+      continue;
+    }
+    // Um backup JSON v1 preserva as notas das transações, mas não a fila.
+    // Reencontrar o ID na nota impede duplicar importações após restaurar.
+    const restored = await db.getFirstAsync<{
+      id: number; deletedAt: number | null; category: string | null;
+    }>(
+      "SELECT id, deletedAt, category FROM transactions WHERE notes=? " +
+      "ORDER BY (deletedAt IS NULL) DESC, id DESC LIMIT 1;",
+      [provenance(row.sourceId)],
+    );
+    if (restored) {
+      await db.runAsync(
+        "INSERT INTO bank_import_rows (" +
+        "source, sourceId, dateISO, type, amountCents, description, merchantKey, " +
+        "suggestedCategory, suggestedAction, status, category, transactionId, createdAt, updatedAt) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+        [
+          NUBANK_ACCOUNT_SOURCE, row.sourceId, row.dateISO, row.type,
+          row.amountCents, row.description, row.merchantKey,
+          row.suggestedCategory, row.suggestedAction,
+          restored.deletedAt === null ? "imported" : "ignored",
+          restored.category, restored.id, now, now,
+        ],
+      );
       repeated++;
       continue;
     }
@@ -162,7 +192,7 @@ export async function reviewBankItemCore(
     if (decision.action === "import") {
       const inserted = await db.runAsync(IMPORT_TRANSACTION, [
         row.dateISO, row.type, row.amountCents, row.description,
-        now, now, decision.category,
+        now, now, provenance(row.sourceId), decision.category,
       ]);
       transactionId = inserted.lastInsertRowId;
     }
