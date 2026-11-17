@@ -22,6 +22,7 @@ function normalize(value: string): string {
 function safeDisplay(value: string): string {
   return value.replace(/\b\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}\b/g, "")
     .replace(/\b\d{3}\.\d{3}\.\d{3}-\d{2}\b/g, "")
+    .replace(/\b\d{2}\.\d{3}\.\d{3}\b/g, "")
     .replace(/•••\.\d{3}\.\d{3}-••/g, "")
     .replace(/\b(?:Ag[eê]ncia|Conta)\s*:\s*[\d.-]+/gi, "")
     .replace(/\s+/g, " ").replace(/^[\s-]+|[\s-]+$/g, "").slice(0, 180);
