@@ -40,6 +40,8 @@ export function reviewNubankImport(db: SQLiteDatabase, decision: ReviewDecision)
   return atomic(db, (tx) => reviewBankItemCore(tx, decision));
 }
 
-export function undoNubankImport(db: SQLiteDatabase, rowId: number) {
-  return atomic(db, (tx) => undoBankReviewCore(tx, rowId));
+export function undoNubankImport(db: SQLiteDatabase, rowIds: number[]) {
+  return atomic(db, async (tx) => {
+    for (const rowId of rowIds) await undoBankReviewCore(tx, rowId);
+  });
 }
