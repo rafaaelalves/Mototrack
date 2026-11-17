@@ -13,7 +13,11 @@ async function atomic<T>(
   work: (tx: SQLiteDatabase) => Promise<T>,
 ): Promise<T> {
   if (Platform.OS !== "web") {
-    return db.withExclusiveTransactionAsync(work);
+    let value!: T;
+    await db.withExclusiveTransactionAsync(async (tx) => {
+      value = await work(tx);
+    });
+    return value;
   }
   // As APIs de transação exclusiva não existem em Expo SQLite Web.
   let value!: T;
