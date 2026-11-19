@@ -32,12 +32,31 @@ export type BankImportRuleBackup = {
   updatedAt: number;
 };
 
+export type BankImportBatchBackup = {
+  createdAt: number;
+  source: string;
+  firstDate: string;
+  lastDate: string;
+  originalCount: number;
+  cancelledCount: number;
+  lastActivityAt: number;
+};
+export type BankImportEventBackup = {
+  id: number;
+  source: string;
+  batchCreatedAt: number;
+  action: "pending_cancelled" | "approved_reversed";
+  affectedCount: number;
+  occurredAt: number;
+};
 export type BackupFile = {
-  version: 1 | 2;
+  version: 1 | 2 | 3;
   exportedAt: number;
   transactions: Transaction[];
   bankImportRows: BankImportBackupRow[];
   bankImportRules: BankImportRuleBackup[];
+  bankImportBatches: BankImportBatchBackup[];
+  bankImportEvents: BankImportEventBackup[];
 };
 
 const validIncomeCategories = new Set(["salary", "delivery", "one_off"]);
@@ -257,14 +276,46 @@ function parseBankRule(value: unknown, index: number): BankImportRuleBackup {
   };
 }
 
+function parseBankBatch(value: unknown, index: number): BankImportBatchBackup {
+  const label = "Lote " + (index + 1), item = objectAt(value, label);
+  const source = nonemptyText(item.source, label + " origem", 50);
+  if (source !== "nubank-account") throw new Error(label + ": origem inválida.");
+  const firstDate = validISODate(item.firstDate, label + " primeira data");
+  const lastDate = validISODate(item.lastDate, label + " última data");
+  if (firstDate > lastDate) throw new Error(label + ": intervalo de datas inválido.");
+  const originalCount = integerAt(item.originalCount, label + " quantidade");
+  const cancelledCount = integerAt(item.cancelledCount, label + " cancelados");
+  if (cancelledCount > originalCount) throw new Error(label + ": cancelados superiores ao lote.");
+  return {
+    createdAt: integerAt(item.createdAt, label + " criação", 1),
+    source, firstDate, lastDate, originalCount, cancelledCount,
+    lastActivityAt: integerAt(item.lastActivityAt, label + " atualização"),
+  };
+}
+function parseBankEvent(value: unknown, index: number): BankImportEventBackup {
+  const label = "Evento " + (index + 1), item = objectAt(value, label);
+  if (item.source !== "nubank-account") throw new Error(label + ": origem inválida.");
+  if (item.action !== "pending_cancelled" && item.action !== "approved_reversed") {
+    throw new Error(label + ": ação inválida.");
+  }
+  return {
+    id: integerAt(item.id, label + " id", 1),
+    source: "nubank-account",
+    batchCreatedAt: integerAt(item.batchCreatedAt, label + " lote", 1),
+    action: item.action,
+    affectedCount: integerAt(item.affectedCount, label + " quantidade", 1),
+    occurredAt: integerAt(item.occurredAt, label + " data"),
+  };
+}
+
 /**
  * Faz validação completa ANTES de qualquer DELETE/INSERT.
  * O objeto retornado contém cópias normalizadas dos lançamentos.
  */
 export function parseBackupFile(input: unknown): BackupFile {
   const file = objectAt(input, "O backup");
-  if (file.version !== 1 && file.version !== 2) {
-    throw new Error("Versão de backup incompatível. Esperadas: 1 ou 2.");
+  if (file.version !== 1 && file.version !== 2 && file.version !== 3) {
+    throw new Error("Versão de backup incompatível. Esperadas: 1, 2 ou 3.");
   }
   const exportedAt = integerAt(file.exportedAt, "Data de exportação");
   if (!Array.isArray(file.transactions)) {
@@ -283,7 +334,7 @@ export function parseBackupFile(input: unknown): BackupFile {
     return transaction;
   });
   if (file.version === 1) {
-    return { version: 1, exportedAt, transactions, bankImportRows: [], bankImportRules: [] };
+    return { version: 1, exportedAt, transactions, bankImportRows: [], bankImportRules: [], bankImportBatches: [], bankImportEvents: [] };
   }
   if (!Array.isArray(file.bankImportRows) || !Array.isArray(file.bankImportRules)) {
     throw new Error("Backup v2 precisa conter a fila de extratos e as regras.");
@@ -314,5 +365,43 @@ export function parseBackupFile(input: unknown): BackupFile {
     ruleKeys.add(key);
   }
 
-  return { version: 2, exportedAt, transactions, bankImportRows: rows, bankImportRules: rules };
+  if (file.version === 2) {
+    return {
+      version: 2, exportedAt, transactions, bankImportRows: rows,
+      bankImportRules: rules, bankImportBatches: [], bankImportEvents: [],
+    };
+  }
+  if (!Array.isArray(file.bankImportBatches) || !Array.isArray(file.bankImportEvents)) {
+    throw new Error("Backup v3 exige lotes e histórico de eventos.");
+  }
+  const batches = file.bankImportBatches.map((v,i) => parseBankBatch(v,i));
+  const events = file.bankImportEvents.map((v,i) => parseBankEvent(v,i));
+  const batchesByDate = new Map<number, BankImportBatchBackup>();
+  for (const batch of batches) {
+    if (batchesByDate.has(batch.createdAt)) throw new Error("Lotes duplicados no backup.");
+    batchesByDate.set(batch.createdAt, batch);
+  }
+  for (const row of rows) {
+    if (!batchesByDate.has(row.createdAt)) {
+      throw new Error("Movimentação refere lote ausente no backup v3.");
+    }
+  }
+  const eventsSeen = new Set<number>();
+  for (const event of events) {
+    if (eventsSeen.has(event.id)) throw new Error("Eventos duplicados no backup.");
+    eventsSeen.add(event.id);
+    if (!batchesByDate.has(event.batchCreatedAt)) {
+      throw new Error("Evento refere lote ausente no backup v3.");
+    }
+  }
+  for (const batch of batches) {
+    const liveCount = rows.filter(r => r.createdAt === batch.createdAt).length;
+    if (batch.originalCount < liveCount + batch.cancelledCount) {
+      throw new Error("Contagem de lote inválida no backup v3.");
+    }
+  }
+  return {
+    version: 3, exportedAt, transactions, bankImportRows: rows,
+    bankImportRules: rules, bankImportBatches: batches, bankImportEvents: events,
+  };
 }
