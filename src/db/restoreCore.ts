@@ -27,6 +27,16 @@ const INSERT_BANK_RULE =
   "INSERT INTO bank_import_rules (" +
   "id, source, merchantKey, type, action, category, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?);";
 
+
+const INSERT_BANK_BATCH =
+  "INSERT INTO bank_import_batches " +
+  "(createdAt, source, firstDate, lastDate, originalCount, cancelledCount, lastActivityAt) " +
+  "VALUES (?, ?, ?, ?, ?, ?, ?);";
+const INSERT_BANK_EVENT =
+  "INSERT INTO bank_import_batch_events " +
+  "(id, source, batchCreatedAt, action, affectedCount, occurredAt) " +
+  "VALUES (?, ?, ?, ?, ?, ?);";
+
 export async function replaceTransactions(
   connection: RestoreConnection,
   data: BackupFile,
@@ -38,8 +48,12 @@ export async function replaceTransactions(
   const pending = await connection.getFirstAsync<{ count: number }>(
     "SELECT COUNT(*) AS count FROM bank_import_rows;",
   );
+  const history = await connection.getFirstAsync<{ count: number }>(
+    "SELECT COUNT(*) AS count FROM bank_import_batches;",
+  );
   if (data.transactions.length === 0 && data.bankImportRows.length === 0 &&
-      ((existing?.count ?? 0) > 0 || (pending?.count ?? 0) > 0)) {
+      data.bankImportBatches.length === 0 &&
+      ((existing?.count ?? 0) > 0 || (pending?.count ?? 0) > 0 || (history?.count ?? 0) > 0)) {
     throw new Error(
       "O backup está vazio e não pode substituir um banco com dados.",
     );
@@ -47,6 +61,8 @@ export async function replaceTransactions(
 
   // Todos os objetos foram validados ANTES desta transação.
   // As tabelas de estágio referenciam os IDs das transações.
+  await connection.runAsync("DELETE FROM bank_import_batch_events;");
+  await connection.runAsync("DELETE FROM bank_import_batches;");
   await connection.runAsync("DELETE FROM bank_import_rows;");
   await connection.runAsync("DELETE FROM bank_import_rules;");
   await connection.runAsync("DELETE FROM transactions;");
@@ -78,5 +94,27 @@ export async function replaceTransactions(
       rule.id, rule.source, rule.merchantKey, rule.type, rule.action,
       rule.category, rule.updatedAt,
     ]);
+  }
+  if (data.version === 3) {
+    for (const batch of data.bankImportBatches) {
+      await connection.runAsync(INSERT_BANK_BATCH, [
+        batch.createdAt, batch.source, batch.firstDate, batch.lastDate,
+        batch.originalCount, batch.cancelledCount, batch.lastActivityAt,
+      ]);
+    }
+    for (const event of data.bankImportEvents) {
+      await connection.runAsync(INSERT_BANK_EVENT, [
+        event.id, event.source, event.batchCreatedAt, event.action,
+        event.affectedCount, event.occurredAt,
+      ]);
+    }
+  } else {
+    // V2 possui a fila, mas ainda não tem lotes nem histórico separado.
+    await connection.runAsync(
+      "INSERT INTO bank_import_batches (" +
+      "createdAt, source, firstDate, lastDate, originalCount, cancelledCount, lastActivityAt) " +
+      "SELECT createdAt, MIN(source), MIN(dateISO), MAX(dateISO), COUNT(*), 0, MAX(updatedAt) " +
+      "FROM bank_import_rows GROUP BY createdAt;"
+    );
   }
 }
