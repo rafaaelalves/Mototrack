@@ -53,7 +53,8 @@ export default function NubankCsvImportScreen() {
   const [compareBusy, setCompareBusy] = useState(false);
   const [batches, setBatches] = useState<ImportBatchSummary[]>([]);
   const [showBatches, setShowBatches] = useState(false);
-  const [brandGroup, setBrandGroup] = useState<{ count: number; label: string } | null>(null);
+  const [brandGroup, setBrandGroup] = useState<{ count: number; label: string; examples: string[] } | null>(null);
+  const [exactGroup, setExactGroup] = useState<{ count: number; label: string; examples: string[] } | null>(null);
   const [learned, setLearned] = useState<LearnedCategory | null>(null);
 
   const load = useCallback(async (pageOffset = 0) => {
@@ -84,14 +85,17 @@ export default function NubankCsvImportScreen() {
   useEffect(() => {
     let active = true;
     setBrandGroup(null);
+    setExactGroup(null);
     setLearned(null);
     if (!item) return () => { active = false; };
     void Promise.all([
       getNubankCategoryGroup(db, item.id, "brand").catch(() => null),
+      getNubankCategoryGroup(db, item.id, "exact"),
       getNubankLearnedCategory(db, item.merchantKey, item.type),
-    ]).then(([group, suggestion]) => {
+    ]).then(([group, exact, suggestion]) => {
       if (!active) return;
       setBrandGroup(group);
+      setExactGroup(exact);
       setLearned(suggestion);
       if (suggestion && item.category === null && item.ruleCategory === null) {
         setCategory((current) => current ?? suggestion.category);
@@ -150,8 +154,9 @@ export default function NubankCsvImportScreen() {
         "Classificar sem importar",
         "Marcar " + group.count + " movimentações pendentes como " +
         (categories.find((c) => c.key === category)?.label ?? category) +
-        "?\n\nA categoria será salva, mas nenhuma despesa ou receita será criada. " +
-        "Você poderá revisar as possíveis duplicatas depois.",
+        "?\n\nExemplos: " + group.examples.map((key) => key.split(":").slice(1).join(":")).join(", ") +
+        ".\n\nSomente as movimentações ainda sem categoria serão alteradas. " +
+        "Nenhuma despesa ou receita será criada.",
         [
           { text: "Cancelar", style: "cancel" },
           { text: "Classificar " + group.count, onPress: () => { void classifyGroup(scope, category); } },
@@ -512,25 +517,25 @@ export default function NubankCsvImportScreen() {
               ))}
             </View>
 
-            {((item.pendingGroupCount > 1) || (brandGroup && brandGroup.count > 1)) ? (
+            {((exactGroup && exactGroup.count > 1) || (brandGroup && brandGroup.count > 1)) ? (
               <View style={styles.learnPanel}>
                 <Text style={styles.sectionTitle}>Classificar em lote, sem importar</Text>
                 <Text style={styles.muted}>
-                  Você pode salvar a categoria de várias compras de uma vez. Elas continuam
-                  pendentes para confirmar ou conciliar depois.
+                  Você pode categorizar várias compras de uma vez, sem aprová-las.
+                  As classificações já preenchidas serão preservadas.
                 </Text>
-                {item.pendingGroupCount > 1 ? (
+                {exactGroup && exactGroup.count > 1 ? (
                   <Pressable
                     style={styles.compareButton}
                     disabled={busy}
                     onPress={() => confirmClassifyGroup("exact")}
                   >
                     <Text style={styles.compareText}>
-                      Classificar {item.pendingGroupCount} descrições idênticas
+                      Classificar {exactGroup.count} descrições idênticas
                     </Text>
                   </Pressable>
                 ) : null}
-                {brandGroup && brandGroup.count > item.pendingGroupCount ? (
+                {brandGroup && brandGroup.count > (exactGroup?.count ?? 0) ? (
                   <Pressable
                     style={styles.compareButton}
                     disabled={busy}
