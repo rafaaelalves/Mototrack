@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - feat/nubank-csv-import
+      - fix/nubank-review-flow
   pull_request:
     branches:
       - develop

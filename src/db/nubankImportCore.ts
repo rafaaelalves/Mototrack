@@ -25,6 +25,19 @@ export type BankImportItem = {
   ruleAction: ImportAction | null;
   ruleCategory: string | null;
   similarCount: number;
+  pendingGroupCount: number;
+};
+
+export type ExistingTransactionMatch = {
+  id: number;
+  dateISO: string;
+  type: TransactionType;
+  amountCents: number;
+  title: string;
+  category: string | null;
+  notes: string | null;
+  createdAt: number;
+  distanceMeters: number | null;
 };
 
 export type ReviewDecision = {
@@ -137,19 +150,27 @@ export async function listBankImportItemsCore(
   db: SqlConnection,
   status: ImportStatus = "pending",
   limit = 100,
+  offset = 0,
 ): Promise<BankImportItem[]> {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
     throw new Error("Limite de listagem inválido.");
+  }
+  if (!Number.isSafeInteger(offset) || offset < 0) {
+    throw new Error("Deslocamento de página inválido.");
   }
   return db.getAllAsync<BankImportItem>(
     "SELECT b.*, r.action AS ruleAction, r.category AS ruleCategory, " +
     "(SELECT COUNT(*) FROM transactions t WHERE t.deletedAt IS NULL " +
     "AND t.dateISO=b.dateISO AND t.type=b.type AND t.amountCents=b.amountCents) " +
-    "AS similarCount FROM bank_import_rows b " +
+    "AS similarCount, " +
+    "(SELECT COUNT(*) FROM bank_import_rows g " +
+    "WHERE g.source=b.source AND g.status='pending' " +
+    "AND g.merchantKey=b.merchantKey AND g.type=b.type) AS pendingGroupCount " +
+    "FROM bank_import_rows b " +
     "LEFT JOIN bank_import_rules r ON r.source=b.source " +
     "AND r.merchantKey=b.merchantKey AND r.type=b.type " +
-    "WHERE b.source=? AND b.status=? ORDER BY b.dateISO DESC, b.id DESC LIMIT ?;",
-    [NUBANK_ACCOUNT_SOURCE, status, limit],
+    "WHERE b.source=? AND b.status=? ORDER BY b.dateISO DESC, b.id DESC LIMIT ? OFFSET ?;",
+    [NUBANK_ACCOUNT_SOURCE, status, limit, offset],
   );
 }
 export async function countPendingCore(db: SqlConnection): Promise<number> {
@@ -158,6 +179,57 @@ export async function countPendingCore(db: SqlConnection): Promise<number> {
     [NUBANK_ACCOUNT_SOURCE],
   );
   return count?.total ?? 0;
+}
+
+/**
+ * A mesma data, direção e valor são somente uma pista: a comparação exibe
+ * os registros originais e não elimina nada automaticamente.
+ */
+export async function getExistingTransactionMatchesCore(
+  db: SqlConnection,
+  itemId: number,
+  limit = 25,
+): Promise<ExistingTransactionMatch[]> {
+  if (!Number.isSafeInteger(itemId) || itemId < 1) {
+    throw new Error("Movimentação inválida para comparação.");
+  }
+  const item = await db.getFirstAsync<{
+    dateISO: string; type: TransactionType; amountCents: number;
+  }>(
+    "SELECT dateISO, type, amountCents FROM bank_import_rows " +
+    "WHERE id=? AND source=? AND status='pending';",
+    [itemId, NUBANK_ACCOUNT_SOURCE],
+  );
+  if (!item) return [];
+  return db.getAllAsync<ExistingTransactionMatch>(
+    "SELECT id, dateISO, type, amountCents, title, category, notes, " +
+    "createdAt, distanceMeters FROM transactions " +
+    "WHERE deletedAt IS NULL AND dateISO=? AND type=? AND amountCents=? " +
+    "ORDER BY createdAt DESC, id DESC LIMIT ?;",
+    [item.dateISO, item.type, item.amountCents, limit],
+  );
+}
+
+/** Guarda uma categoria escolhida para revisão posterior, sem aprovar. */
+export async function saveBankImportDraftCore(
+  db: SqlConnection,
+  itemId: number,
+  category: string | null,
+): Promise<void> {
+  const item = await db.getFirstAsync<{ type: TransactionType }>(
+    "SELECT type FROM bank_import_rows WHERE id=? AND source=? AND status='pending';",
+    [itemId, NUBANK_ACCOUNT_SOURCE],
+  );
+  if (!item) throw new Error("Movimentação não está mais pendente.");
+  if (category !== null) {
+    const allowed = item.type === "income" ? ALLOWED_INCOME : ALLOWED_EXPENSE;
+    if (!allowed.has(category)) throw new Error("Categoria de rascunho inválida.");
+  }
+  await db.runAsync(
+    "UPDATE bank_import_rows SET category=?, updatedAt=? " +
+    "WHERE id=? AND source=? AND status='pending';",
+    [category, Date.now(), itemId, NUBANK_ACCOUNT_SOURCE],
+  );
 }
 
 /** Transação exclusiva/atômica aberta pelo chamador. */
