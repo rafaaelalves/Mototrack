@@ -149,7 +149,7 @@ export async function getPendingCategoryGroupCore(
   db: SqlConnection,
   rowId: number,
   scope: GroupScope,
-): Promise<{ count: number; label: string }> {
+): Promise<{ count: number; label: string; examples: string[] }> {
   const item = await db.getFirstAsync<{ merchantKey: string; type: TransactionType }>(
     "SELECT merchantKey, type FROM bank_import_rows " +
     "WHERE id=? AND source=? AND status='pending';",
@@ -157,14 +157,22 @@ export async function getPendingCategoryGroupCore(
   );
   if (!item) throw new Error("Movimentação pendente não encontrada.");
   const where = selectionPredicate(scope, item.merchantKey);
+  const conditions = "source=? AND status='pending' AND category IS NULL " +
+    "AND type=? AND " + where.clause;
+  const params = [NUBANK_ACCOUNT_SOURCE, item.type, ...where.values];
   const result = await db.getFirstAsync<{ total: number }>(
-    "SELECT COUNT(*) AS total FROM bank_import_rows WHERE source=? AND " +
-    "status='pending' AND type=? AND " + where.clause + ";",
-    [NUBANK_ACCOUNT_SOURCE, item.type, ...where.values],
+    "SELECT COUNT(*) AS total FROM bank_import_rows WHERE " + conditions + ";",
+    params,
+  );
+  const samples = await db.getAllAsync<{ merchantKey: string }>(
+    "SELECT DISTINCT merchantKey FROM bank_import_rows WHERE " + conditions +
+    " ORDER BY merchantKey LIMIT 5;",
+    params,
   );
   return {
     count: result?.total ?? 0,
     label: scope === "brand" ? (brandPrefix(item.merchantKey) ?? item.merchantKey).slice(6) : item.merchantKey,
+    examples: samples.map((sample) => sample.merchantKey),
   };
 }
 
@@ -184,7 +192,7 @@ export async function categorizePendingGroupCore(
   const where = selectionPredicate(scope, item.merchantKey);
   const result = await db.runAsync(
     "UPDATE bank_import_rows SET category=?, updatedAt=? WHERE source=? " +
-    "AND status='pending' AND type=? AND " + where.clause + ";",
+    "AND status='pending' AND category IS NULL AND type=? AND " + where.clause + ";",
     [category, Date.now(), NUBANK_ACCOUNT_SOURCE, item.type, ...where.values],
   );
   return result.changes;
