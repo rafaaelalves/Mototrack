@@ -122,7 +122,7 @@ function suggestions(key: string, type: TransactionType) {
   if (/\b(?:POSTO|AUTOPOSTO|SHELL|IPIRANGA)\b/.test(key)) {
     return { category: "fuel" as const, action: null };
   }
-  if (/\b(?:MERCADO|SUPERMERCADO|OXXO|IFOOD|PADARIA|RESTAURANTE)\b/.test(key)) {
+  if (/\b(?:MERCADOS?|SUPERMERCADOS?|OXXO|IFOOD|PADARIA|RESTAURANTE)\b/.test(key)) {
     return { category: "food" as const, action: null };
   }
   if (/\b(?:DROGASIL|DROGARIA|FARMACIA)\b/.test(key)) {
