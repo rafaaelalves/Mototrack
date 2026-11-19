@@ -20,7 +20,9 @@ import type {
   LearnedCategory, GroupScope, ImportBatchEvent,
 } from "@/src/db/nubankImportCore";
 import { selectNubankAccountCsv } from "@/src/services/nubankImportFile";
-import { saveReversalRecoveryBackup } from "@/src/services/backupFile";
+import {
+  saveReversalRecoveryBackup, saveCancellationRecoveryBackup,
+} from "@/src/services/backupFile";
 import type { BatchReversalPreview } from "@/src/db/bankBatchRollback";
 
 function money(value: number): string {
@@ -135,11 +137,16 @@ export default function NubankCsvImportScreen() {
     if (busy) return;
     setBusy(true);
     try {
+      const recovery = await saveCancellationRecoveryBackup(db);
       const result = await cancelNubankPendingBatch(db, createdAt);
       setCursor(0);
       await load(0);
       setNotice(result.cancelled + " pendência(s) descartada(s). " +
-        result.preservedReviewed + " movimentação(ões) previamente revisada(s) preservada(s).");
+        result.preservedReviewed + " movimentação(ões) previamente revisada(s) preservada(s). " +
+        "Cópia de recuperação: " + recovery);
+      if (expandedHistoryBatch === createdAt) {
+        setBatchEvents(await getNubankBatchEvents(db, createdAt));
+      }
       setUndoIds([]);
     } catch (error) {
       Alert.alert("Não foi possível cancelar o extrato", message(error));
