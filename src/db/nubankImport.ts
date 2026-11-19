@@ -4,11 +4,16 @@ import type { NubankAccountRow } from "../domain/nubankCsv";
 import {
   countPendingCore, listBankImportItemsCore,
   getExistingTransactionMatchesCore, saveBankImportDraftCore,
-  listImportBatchesCore, cancelPendingBatchCore, getPendingCategoryGroupCore,
+  listImportBatchesCore, listImportBatchEventsCore,
+  cancelPendingBatchCore, getPendingCategoryGroupCore,
   categorizePendingGroupCore, getLearnedCategoryCore,
   reviewBankItemCore, stageNubankRowsCore, undoBankReviewCore,
   type GroupScope, type ReviewDecision,
 } from "./nubankImportCore";
+import {
+  previewBankBatchReversalCore, reverseBankBatchCore,
+  type BatchReversalPreview,
+} from "./bankBatchRollback";
 
 /** No dispositivo, isolamento exclusivo; no navegador, transação comum. */
 async function atomic<T>(
@@ -105,4 +110,14 @@ export function getNubankLearnedCategory(
   type: "income" | "expense",
 ) {
   return getLearnedCategoryCore(db, merchantKey, type);
+}
+
+export function getNubankBatchEvents(db: SQLiteDatabase, createdAt: number) {
+  return listImportBatchEventsCore(db, createdAt);
+}
+export function previewNubankBatchReversal(db: SQLiteDatabase, createdAt: number) {
+  return previewBankBatchReversalCore(db, createdAt);
+}
+export function reverseNubankBatch(db: SQLiteDatabase, preview: BatchReversalPreview) {
+  return atomic(db, tx => reverseBankBatchCore(tx, preview));
 }
