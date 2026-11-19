@@ -3,6 +3,7 @@ import {
   insertTransaction,
   updateTransaction,
 } from "@/src/db/transactions";
+import { suggestTransactionTitlesCore, type TitleSuggestion } from "@/src/db/titleSuggestions";
 import {
   ExpenseCategoryOptions,
   IncomeCategoryOptions,
@@ -89,6 +90,8 @@ export default function NewEntry() {
   const [type, setType] = useState<"income" | "expense">("income");
   const [amount, setAmount] = useState("");
   const [title, setTitle] = useState("");
+  const [titleSuggestions, setTitleSuggestions] = useState<TitleSuggestion[]>([]);
+  const [suggestionChosen, setSuggestionChosen] = useState(false);
   const [notes, setNotes] = useState("");
   const [incomeCategory, setIncomeCategory] = useState<IncomeCategory | null>(
     null,
@@ -145,6 +148,35 @@ export default function NewEntry() {
       setKm(kmValue);
     })();
   }, [db, isEditing, editingId]);
+
+  useEffect(() => {
+    if (isEditing || suggestionChosen || title.trim().length < 2) {
+      setTitleSuggestions([]);
+      return;
+    }
+    let active = true;
+    const timer = setTimeout(() => {
+      void suggestTransactionTitlesCore(db, title, type).then((options) => {
+        if (active) setTitleSuggestions(options);
+      }).catch(() => {
+        if (active) setTitleSuggestions([]);
+      });
+    }, 180);
+    return () => { active = false; clearTimeout(timer); };
+  }, [db, isEditing, suggestionChosen, title, type]);
+
+  function chooseTitleSuggestion(option: TitleSuggestion) {
+    setTitle(option.title);
+    setSuggestionChosen(true);
+    setTitleSuggestions([]);
+    if (type === "income") {
+      if (IncomeCategoryOptions.some((c) => c.key === option.category)) {
+        setIncomeCategory(option.category as IncomeCategory);
+      }
+    } else if (ExpenseCategoryOptions.some((c) => c.key === option.category)) {
+      setExpenseCategory(option.category as ExpenseCategory);
+    }
+  }
 
   useEffect(() => {
     Animated.parallel([
@@ -336,10 +368,37 @@ export default function NewEntry() {
               <TextInput
                 placeholder="Ex: Salário, Mercado..."
                 value={title}
-                onChangeText={setTitle}
+                onChangeText={(text) => {
+                  setTitle(text);
+                  setSuggestionChosen(false);
+                }}
                 style={[styles.input]}
                 placeholderTextColor="rgba(255,255,255,0.45)"
               />
+              {titleSuggestions.length > 0 ? (
+                <View style={{ backgroundColor: "#282638", borderRadius: 12, padding: 6, gap: 4 }}>
+                  <Text style={{ color: "#BAB7CF", fontSize: 12, paddingHorizontal: 6 }}>
+                    Seus lançamentos anteriores
+                  </Text>
+                  {titleSuggestions.map((option, index) => (
+                    <Pressable
+                      key={option.title + option.category + index}
+                      style={{ paddingVertical: 9, paddingHorizontal: 10, borderRadius: 8 }}
+                      onPress={() => chooseTitleSuggestion(option)}
+                    >
+                      <Text style={{ color: "#FFFFFF", fontSize: 14, fontWeight: "600" }}>
+                        {option.title}
+                      </Text>
+                      <Text style={{ color: "#B9B4CC", fontSize: 12 }}>
+                        {type === "income"
+                          ? IncomeCategoryOptions.find((c) => c.key === option.category)?.label ?? option.category
+                          : ExpenseCategoryOptions.find((c) => c.key === option.category)?.label ?? option.category}
+                        {" · "}{option.occurrences} registro(s)
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              ) : null}
             </View>
             {type === "income" && (
               <View style={styles.formGroup}>
