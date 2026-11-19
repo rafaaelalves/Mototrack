@@ -4,8 +4,10 @@ import type { NubankAccountRow } from "../domain/nubankCsv";
 import {
   countPendingCore, listBankImportItemsCore,
   getExistingTransactionMatchesCore, saveBankImportDraftCore,
+  listImportBatchesCore, cancelPendingBatchCore, getPendingCategoryGroupCore,
+  categorizePendingGroupCore, getLearnedCategoryCore,
   reviewBankItemCore, stageNubankRowsCore, undoBankReviewCore,
-  type ReviewDecision,
+  type GroupScope, type ReviewDecision,
 } from "./nubankImportCore";
 
 /** No dispositivo, isolamento exclusivo; no navegador, transação comum. */
@@ -70,4 +72,37 @@ export function undoNubankImport(db: SQLiteDatabase, rowIds: number[]) {
   return atomic(db, async (tx) => {
     for (const rowId of rowIds) await undoBankReviewCore(tx, rowId);
   });
+}
+
+export function getNubankImportBatches(db: SQLiteDatabase) {
+  return listImportBatchesCore(db);
+}
+
+export function cancelNubankPendingBatch(db: SQLiteDatabase, createdAt: number) {
+  return atomic(db, (tx) => cancelPendingBatchCore(tx, createdAt));
+}
+
+export function getNubankCategoryGroup(
+  db: SQLiteDatabase,
+  rowId: number,
+  scope: GroupScope,
+) {
+  return getPendingCategoryGroupCore(db, rowId, scope);
+}
+
+export function categorizeNubankPendingGroup(
+  db: SQLiteDatabase,
+  rowId: number,
+  category: string,
+  scope: GroupScope,
+) {
+  return atomic(db, (tx) => categorizePendingGroupCore(tx, rowId, category, scope));
+}
+
+export function getNubankLearnedCategory(
+  db: SQLiteDatabase,
+  merchantKey: string,
+  type: "income" | "expense",
+) {
+  return getLearnedCategoryCore(db, merchantKey, type);
 }

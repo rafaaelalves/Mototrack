@@ -4,6 +4,7 @@ on:
     branches:
       - feat/nubank-csv-import
       - fix/nubank-review-flow
+      - feat/nubank-review-batches-and-learning
   pull_request:
     branches:
       - develop

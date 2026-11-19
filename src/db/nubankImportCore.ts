@@ -50,6 +50,203 @@ export type ReviewDecision = {
 
 type SqlConnection = Pick<SQLiteDatabase, "getFirstAsync" | "getAllAsync" | "runAsync">;
 
+export type ImportBatchSummary = {
+  createdAt: number;
+  total: number;
+  pending: number;
+  imported: number;
+  reviewed: number;
+  firstDate: string;
+  lastDate: string;
+};
+
+export type LearnedCategory = {
+  category: string;
+  count: number;
+  exampleTitle: string;
+};
+
+export type GroupScope = "exact" | "brand";
+
+/** Sufixo da loja no extrato: "DEBIT:OXXO PISCINAS" -> "DEBIT:OXXO". */
+export function brandPrefix(merchantKey: string): string | null {
+  // Para não agrupar Pix, transferências, "Mercado", "Posto" etc. indevidamente.
+  if (!merchantKey.startsWith("DEBIT:")) return null;
+  const name = merchantKey.slice(6).trim();
+  const first = name.split(/\s+/)[0] || "";
+  const generic = new Set([
+    "MERCADO","MERCADOS","SUPERMERCADO","SUPERMERCADOS","POSTO",
+    "LOJA","COMERCIO","COMERCIAL","AUTO","PAGAMENTO","COMPRA",
+    "RESTAURANTE","LANCHONETE","PADARIA","FARMACIA",
+  ]);
+  if (first.length < 4 || generic.has(first) || !/^[A-Z0-9]+$/.test(first)) {
+    return null;
+  }
+  return "DEBIT:" + first;
+}
+
+function selectionPredicate(scope: GroupScope, merchantKey: string) {
+  const prefix = scope === "brand" ? brandPrefix(merchantKey) : null;
+  if (scope === "brand" && !prefix) {
+    throw new Error("Agrupamento por nome não é seguro para este estabelecimento.");
+  }
+  if (prefix) {
+    return {
+      clause: "(merchantKey=? OR (substr(merchantKey,1,?)=? AND substr(merchantKey,?+1,1)=' '))",
+      values: [prefix, prefix.length, prefix, prefix.length],
+    };
+  }
+  return { clause: "merchantKey=?", values: [merchantKey] };
+}
+
+/** Os lotes antigos já compartilham createdAt, atribuído uma vez por CSV. */
+export async function listImportBatchesCore(db: SqlConnection): Promise<ImportBatchSummary[]> {
+  return db.getAllAsync<ImportBatchSummary>(
+    "SELECT createdAt, COUNT(*) AS total, " +
+    "SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending, " +
+    "SUM(CASE WHEN status='imported' THEN 1 ELSE 0 END) AS imported, " +
+    "SUM(CASE WHEN status<>'pending' THEN 1 ELSE 0 END) AS reviewed, " +
+    "MIN(dateISO) AS firstDate, MAX(dateISO) AS lastDate " +
+    "FROM bank_import_rows WHERE source=? GROUP BY createdAt " +
+    "HAVING SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END)>0 " +
+    "ORDER BY createdAt DESC;",
+    [NUBANK_ACCOUNT_SOURCE],
+  );
+}
+
+/**
+ * Descartar revisão de um arquivo específico: apaga APENAS pendências.
+ * Não toca em transações já aprovadas, ignoradas ou regras; as pendências
+ * descartadas poderão ser importadas novamente pelo mesmo CSV.
+ */
+export async function cancelPendingBatchCore(
+  db: SqlConnection,
+  batchCreatedAt: number,
+): Promise<{ cancelled: number; preservedReviewed: number }> {
+  if (!Number.isSafeInteger(batchCreatedAt) || batchCreatedAt <= 0) {
+    throw new Error("Lote de importação inválido.");
+  }
+  const summary = await db.getFirstAsync<{ pending: number; reviewed: number }>(
+    "SELECT SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending, " +
+    "SUM(CASE WHEN status<>'pending' THEN 1 ELSE 0 END) AS reviewed " +
+    "FROM bank_import_rows WHERE source=? AND createdAt=?;",
+    [NUBANK_ACCOUNT_SOURCE, batchCreatedAt],
+  );
+  if (!summary || !summary.pending) {
+    throw new Error("Este lote não possui mais movimentações pendentes.");
+  }
+  const outcome = await db.runAsync(
+    "DELETE FROM bank_import_rows WHERE source=? AND createdAt=? AND status='pending';",
+    [NUBANK_ACCOUNT_SOURCE, batchCreatedAt],
+  );
+  if (outcome.changes !== summary.pending) {
+    throw new Error("O lote mudou durante o cancelamento. Operação revertida.");
+  }
+  return { cancelled: outcome.changes, preservedReviewed: summary.reviewed ?? 0 };
+}
+
+export async function getPendingCategoryGroupCore(
+  db: SqlConnection,
+  rowId: number,
+  scope: GroupScope,
+): Promise<{ count: number; label: string; examples: string[] }> {
+  const item = await db.getFirstAsync<{ merchantKey: string; type: TransactionType }>(
+    "SELECT merchantKey, type FROM bank_import_rows " +
+    "WHERE id=? AND source=? AND status='pending';",
+    [rowId, NUBANK_ACCOUNT_SOURCE],
+  );
+  if (!item) throw new Error("Movimentação pendente não encontrada.");
+  const where = selectionPredicate(scope, item.merchantKey);
+  const conditions = "source=? AND status='pending' AND category IS NULL " +
+    "AND type=? AND " + where.clause;
+  const params = [NUBANK_ACCOUNT_SOURCE, item.type, ...where.values];
+  const result = await db.getFirstAsync<{ total: number }>(
+    "SELECT COUNT(*) AS total FROM bank_import_rows WHERE " + conditions + ";",
+    params,
+  );
+  const samples = await db.getAllAsync<{ merchantKey: string }>(
+    "SELECT DISTINCT merchantKey FROM bank_import_rows WHERE " + conditions +
+    " ORDER BY merchantKey LIMIT 5;",
+    params,
+  );
+  return {
+    count: result?.total ?? 0,
+    label: scope === "brand" ? (brandPrefix(item.merchantKey) ?? item.merchantKey).slice(6) : item.merchantKey,
+    examples: samples.map((sample) => sample.merchantKey),
+  };
+}
+
+export async function categorizePendingGroupCore(
+  db: SqlConnection,
+  rowId: number,
+  category: string,
+  scope: GroupScope,
+): Promise<number> {
+  const item = await db.getFirstAsync<{ merchantKey: string; type: TransactionType }>(
+    "SELECT merchantKey, type FROM bank_import_rows " +
+    "WHERE id=? AND source=? AND status='pending';",
+    [rowId, NUBANK_ACCOUNT_SOURCE],
+  );
+  if (!item) throw new Error("Movimentação pendente não encontrada.");
+  validateCategory(item.type, "import", category);
+  const where = selectionPredicate(scope, item.merchantKey);
+  const result = await db.runAsync(
+    "UPDATE bank_import_rows SET category=?, updatedAt=? WHERE source=? " +
+    "AND status='pending' AND category IS NULL AND type=? AND " + where.clause + ";",
+    [category, Date.now(), NUBANK_ACCOUNT_SOURCE, item.type, ...where.values],
+  );
+  return result.changes;
+}
+
+function normalizedTitle(text: string): string {
+  return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase().replace(/^(DEBITO|PIX PARA|PIX DE):?\s*/, "")
+    .replace(/[^A-Z0-9]+/g," ").trim();
+}
+
+/**
+ * Aprendizado conservador: títulos históricos com prefixo igual ao nome da
+ * loja, e TODOS da mesma direção/categoria. Divergência => sem sugestão.
+ */
+export async function getLearnedCategoryCore(
+  db: SqlConnection,
+  merchantKey: string,
+  type: TransactionType,
+): Promise<LearnedCategory | null> {
+  const merchant = merchantKey.includes(":")
+    ? merchantKey.slice(merchantKey.indexOf(":") + 1)
+    : merchantKey;
+  const normalized = normalizedTitle(merchant);
+  const prefix = brandPrefix(merchantKey);
+  const token = prefix ? prefix.slice(6) : normalized;
+  if (!token || token.length < 4 || normalized === "CARD BILL") return null;
+  const history = await db.getAllAsync<{
+    title: string; category: string | null; n: number;
+  }>(
+    "SELECT title, category, COUNT(*) AS n FROM transactions " +
+    "WHERE deletedAt IS NULL AND type=? AND category IS NOT NULL " +
+    "GROUP BY title, category ORDER BY n DESC LIMIT 1200;",
+    [type],
+  );
+  const matching = history.filter((r) => {
+    const title = normalizedTitle(r.title);
+    return title === token || title.startsWith(token + " ");
+  });
+  if (!matching.length) return null;
+  const unique = [...new Set(matching.map((r) => r.category))];
+  if (unique.length !== 1 || unique[0] === null) return null;
+  const category = unique[0];
+  if (type === "income" ? !ALLOWED_INCOME.has(category) : !ALLOWED_EXPENSE.has(category)) {
+    return null;
+  }
+  return {
+    category,
+    count: matching.reduce((sum, r) => sum + r.n, 0),
+    exampleTitle: matching[0].title,
+  };
+}
+
+
 const STAGING_INSERT =
   "INSERT INTO bank_import_rows (" +
   "source, sourceId, dateISO, type, amountCents, description, merchantKey, " +
