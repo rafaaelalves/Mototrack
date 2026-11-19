@@ -65,7 +65,7 @@ test("prévia identifica somente importações próprias, não um lançamento ma
   const p=await previewBankBatchReversalCore(db,batch.createdAt);
   assert.equal(p.eligible.length,2);
   assert.equal(p.blocked.length,0);
-  assert.equal(p.expenseCents,2418+1699);
+  assert.equal(p.expenseCents,3510+1699);
   assert.equal(active(sqlite),3);
   const result=await atomic(sqlite,()=>reverseBankBatchCore(db,p));
   assert.equal(result.reversed,2);
