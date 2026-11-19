@@ -11,8 +11,13 @@ import type { ImportAction } from "@/src/domain/nubankCsv";
 import {
   getNubankReviewQueue, getNubankPossibleDuplicates, saveNubankPendingCategory,
   reviewNubankImport, stageNubankImport, undoNubankImport,
+  getNubankImportBatches, cancelNubankPendingBatch,
+  getNubankCategoryGroup, categorizeNubankPendingGroup, getNubankLearnedCategory,
 } from "@/src/db/nubankImport";
-import type { BankImportItem, ExistingTransactionMatch } from "@/src/db/nubankImportCore";
+import type {
+  BankImportItem, ExistingTransactionMatch, ImportBatchSummary,
+  LearnedCategory, GroupScope,
+} from "@/src/db/nubankImportCore";
 import { selectNubankAccountCsv } from "@/src/services/nubankImportFile";
 
 function money(value: number): string {
@@ -46,10 +51,18 @@ export default function NubankCsvImportScreen() {
   const [compareOpen, setCompareOpen] = useState(false);
   const [matches, setMatches] = useState<ExistingTransactionMatch[]>([]);
   const [compareBusy, setCompareBusy] = useState(false);
+  const [batches, setBatches] = useState<ImportBatchSummary[]>([]);
+  const [showBatches, setShowBatches] = useState(false);
+  const [brandGroup, setBrandGroup] = useState<{ count: number; label: string } | null>(null);
+  const [learned, setLearned] = useState<LearnedCategory | null>(null);
 
   const load = useCallback(async (pageOffset = 0) => {
-    const result = await getNubankReviewQueue(db, pageOffset);
+    const [result, availableBatches] = await Promise.all([
+      getNubankReviewQueue(db, pageOffset),
+      getNubankImportBatches(db),
+    ]);
     setQueue(result);
+    setBatches(availableBatches);
     setCursor((index) => Math.min(index, Math.max(0, result.items.length - 1)));
     return result;
   }, [db]);
@@ -67,6 +80,99 @@ export default function NubankCsvImportScreen() {
     setCompareOpen(false);
     setMatches([]);
   }, [item?.id]);
+
+  useEffect(() => {
+    let active = true;
+    setBrandGroup(null);
+    setLearned(null);
+    if (!item) return () => { active = false; };
+    void Promise.all([
+      getNubankCategoryGroup(db, item.id, "brand").catch(() => null),
+      getNubankLearnedCategory(db, item.merchantKey, item.type),
+    ]).then(([group, suggestion]) => {
+      if (!active) return;
+      setBrandGroup(group);
+      setLearned(suggestion);
+      if (suggestion && item.category === null && item.ruleCategory === null) {
+        setCategory((current) => current ?? suggestion.category);
+      }
+    }).catch((error) => {
+      if (active) setNotice("Sugestões indisponíveis: " + message(error));
+    });
+    return () => { active = false; };
+  }, [db, item?.id]);
+
+
+  function confirmCancelBatch(batch: ImportBatchSummary) {
+    if (busy) return;
+    Alert.alert(
+      "Abandonar revisão deste extrato?",
+      "Extrato de " + dateBr(batch.firstDate) + " a " + dateBr(batch.lastDate) +
+      ".\n\nDescartar " + batch.pending + " movimentações PENDENTES? " +
+      batch.reviewed + " decisões já concluídas serão preservadas. " +
+      "Esta operação não apaga transações financeiras e você pode importar o CSV novamente.",
+      [
+        { text: "Manter pendências", style: "cancel" },
+        {
+          text: "Descartar " + batch.pending,
+          style: "destructive",
+          onPress: () => { void cancelBatch(batch.createdAt); },
+        },
+      ],
+    );
+  }
+
+  async function cancelBatch(createdAt: number) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const result = await cancelNubankPendingBatch(db, createdAt);
+      setCursor(0);
+      await load(0);
+      setNotice(result.cancelled + " pendência(s) descartada(s). " +
+        result.preservedReviewed + " movimentação(ões) previamente revisada(s) preservada(s).");
+      setUndoIds([]);
+    } catch (error) {
+      Alert.alert("Não foi possível cancelar o extrato", message(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function confirmClassifyGroup(scope: GroupScope) {
+    if (!item || busy) return;
+    if (!category) {
+      Alert.alert("Escolha uma categoria", "Escolha a categoria antes de classificar o grupo.");
+      return;
+    }
+    void getNubankCategoryGroup(db, item.id, scope).then((group) => {
+      Alert.alert(
+        "Classificar sem importar",
+        "Marcar " + group.count + " movimentações pendentes como " +
+        (categories.find((c) => c.key === category)?.label ?? category) +
+        "?\n\nA categoria será salva, mas nenhuma despesa ou receita será criada. " +
+        "Você poderá revisar as possíveis duplicatas depois.",
+        [
+          { text: "Cancelar", style: "cancel" },
+          { text: "Classificar " + group.count, onPress: () => { void classifyGroup(scope, category); } },
+        ],
+      );
+    }).catch((error) => Alert.alert("Grupo indisponível", message(error)));
+  }
+
+  async function classifyGroup(scope: GroupScope, selectedCategory: string) {
+    if (!item || busy) return;
+    setBusy(true);
+    try {
+      const changed = await categorizeNubankPendingGroup(db, item.id, selectedCategory, scope);
+      setNotice(changed + " movimentação(ões) categorizada(s). Nenhuma foi importada.");
+      await load(queue.offset);
+    } catch (error) {
+      Alert.alert("Não foi possível classificar o grupo", message(error));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function chooseFile() {
     if (busy) return;
@@ -249,6 +355,37 @@ export default function NubankCsvImportScreen() {
         </Pressable>
         {busy ? <ActivityIndicator color="#FFB35A" style={styles.spinner} /> : null}
         {notice ? <Text style={styles.notice}>{notice}</Text> : null}
+        {batches.length > 0 ? (
+          <View style={styles.batchPanel}>
+            <Pressable
+              style={styles.row}
+              onPress={() => setShowBatches((value) => !value)}
+            >
+              <Text style={styles.sectionTitle}>Extratos em revisão ({batches.length})</Text>
+              <Text style={styles.compareText}>{showBatches ? "Ocultar" : "Gerenciar"}</Text>
+            </Pressable>
+            {showBatches ? batches.map((batch) => (
+              <View key={batch.createdAt} style={styles.batchItem}>
+                <Text style={styles.compareTitle}>
+                  {dateBr(batch.firstDate)} — {dateBr(batch.lastDate)}
+                </Text>
+                <Text style={styles.muted}>
+                  Importado em {new Date(batch.createdAt).toLocaleString("pt-BR")}
+                </Text>
+                <Text style={styles.muted}>
+                  {batch.pending} pendente(s) · {batch.reviewed} já revisada(s)
+                </Text>
+                <Pressable
+                  style={styles.cancelBatchButton}
+                  disabled={busy}
+                  onPress={() => confirmCancelBatch(batch)}
+                >
+                  <Text style={styles.warning}>Descartar pendências deste extrato</Text>
+                </Pressable>
+              </View>
+            )) : null}
+          </View>
+        ) : null}
 
         <View style={styles.summary}>
           <Text style={styles.summaryCount}>{queue.pending}</Text>
@@ -283,6 +420,22 @@ export default function NubankCsvImportScreen() {
               </Text>
               <Text style={styles.title}>{item.description}</Text>
               <Text style={styles.hint}>{actionHint}</Text>
+              {learned ? (
+                <View style={styles.learnPanel}>
+                  <Text style={styles.compareSource}>APRENDIDO COM SEUS LANÇAMENTOS</Text>
+                  <Text style={styles.muted}>
+                    {learned.exampleTitle} → {categories.find(c => c.key === learned.category)?.label ?? learned.category}
+                    {" · "}{learned.count} ocorrência(s) anterior(es)
+                  </Text>
+                  <Pressable
+                    onPress={() => setCategory(learned.category)}
+                    style={styles.compareButton}
+                    disabled={busy}
+                  >
+                    <Text style={styles.compareText}>Usar categoria aprendida</Text>
+                  </Pressable>
+                </View>
+              ) : null}
               {item.ruleAction || item.suggestedAction ? (
                 <Text style={styles.hint}>
                   Ação sugerida: {suggestedAction === "transfer" ? "Transferência"
@@ -359,9 +512,40 @@ export default function NubankCsvImportScreen() {
               ))}
             </View>
 
+            {((item.pendingGroupCount > 1) || (brandGroup && brandGroup.count > 1)) ? (
+              <View style={styles.learnPanel}>
+                <Text style={styles.sectionTitle}>Classificar em lote, sem importar</Text>
+                <Text style={styles.muted}>
+                  Você pode salvar a categoria de várias compras de uma vez. Elas continuam
+                  pendentes para confirmar ou conciliar depois.
+                </Text>
+                {item.pendingGroupCount > 1 ? (
+                  <Pressable
+                    style={styles.compareButton}
+                    disabled={busy}
+                    onPress={() => confirmClassifyGroup("exact")}
+                  >
+                    <Text style={styles.compareText}>
+                      Classificar {item.pendingGroupCount} descrições idênticas
+                    </Text>
+                  </Pressable>
+                ) : null}
+                {brandGroup && brandGroup.count > item.pendingGroupCount ? (
+                  <Pressable
+                    style={styles.compareButton}
+                    disabled={busy}
+                    onPress={() => confirmClassifyGroup("brand")}
+                  >
+                    <Text style={styles.compareText}>
+                      Classificar {brandGroup.count} variações de {brandGroup.label}
+                    </Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            ) : null}
             <View style={styles.switchRow}>
               <View style={styles.switchLabel}>
-                <Text style={styles.switchTitle}>Aplicar às semelhantes</Text>
+                <Text style={styles.switchTitle}>Aplicar esta decisão às descrições idênticas</Text>
                 <Text style={styles.muted}>
                   {item.pendingGroupCount} pendente(s) do mesmo estabelecimento/destinatário e direção.
                 </Text>
@@ -457,6 +641,12 @@ const styles = StyleSheet.create({
   compareButton: { paddingVertical: 10, paddingHorizontal: 12, backgroundColor: "#38334C", borderRadius: 10, alignSelf: "flex-start" },
   compareText: { color: "#FFCF91", fontSize: 13, fontWeight: "700" },
   compareSection: { gap: 8, marginTop: 4 },
+  batchPanel: { gap: 10, borderWidth: 1, borderColor: "#48425D",
+    backgroundColor: "#211F37", borderRadius: 12, padding: 12 },
+  batchItem: { borderTopWidth: 1, borderColor: "#49435B", gap: 5, paddingVertical: 10 },
+  cancelBatchButton: { borderWidth: 1, borderColor: "#9C6170",
+    borderRadius: 10, padding: 9, alignSelf: "flex-start" },
+  learnPanel: { gap: 10, padding: 12, backgroundColor: "#26233C", borderRadius: 12 },
   compareCard: { borderWidth: 1, borderColor: "#514A65", backgroundColor: "#1E1D30", borderRadius: 10, padding: 12, gap: 5 },
   compareSource: { color: "#FFCF91", fontSize: 11, fontWeight: "800" },
   compareTitle: { color: "#FFF", fontSize: 14, fontWeight: "600" },
