@@ -56,8 +56,34 @@ export type ImportBatchSummary = {
   pending: number;
   imported: number;
   reviewed: number;
+  ignored: number;
+  transfers: number;
+  reverted: number;
+  cancelled: number;
   firstDate: string;
   lastDate: string;
+};
+export type ImportBatchEvent = {
+  id: number;
+  action: "pending_cancelled" | "approved_reversed";
+  affectedCount: number;
+  occurredAt: number;
+};
+export type ReversalCandidate = {
+  rowId: number;
+  transactionId: number;
+  dateISO: string;
+  amountCents: number;
+  type: TransactionType;
+  description: string;
+};
+export type BatchReversalPreview = {
+  batchCreatedAt: number;
+  reversible: ReversalCandidate[];
+  blocked: { rowId: number; description: string; reason: string }[];
+  alreadyInactive: number;
+  incomeCents: number;
+  expenseCents: number;
 };
 
 export type LearnedCategory = {
@@ -99,25 +125,42 @@ function selectionPredicate(scope: GroupScope, merchantKey: string) {
   return { clause: "merchantKey=?", values: [merchantKey] };
 }
 
-/** Os lotes antigos já compartilham createdAt, atribuído uma vez por CSV. */
+/**
+ * Histórico completo, inclusive lotes concluídos ou cujas pendências foram
+ * descartadas. Só os metadados de lote continuam após o cancelamento.
+ */
 export async function listImportBatchesCore(db: SqlConnection): Promise<ImportBatchSummary[]> {
   return db.getAllAsync<ImportBatchSummary>(
-    "SELECT createdAt, COUNT(*) AS total, " +
-    "SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending, " +
-    "SUM(CASE WHEN status='imported' THEN 1 ELSE 0 END) AS imported, " +
-    "SUM(CASE WHEN status<>'pending' THEN 1 ELSE 0 END) AS reviewed, " +
-    "MIN(dateISO) AS firstDate, MAX(dateISO) AS lastDate " +
-    "FROM bank_import_rows WHERE source=? GROUP BY createdAt " +
-    "HAVING SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END)>0 " +
-    "ORDER BY createdAt DESC;",
+    "SELECT b.createdAt, b.originalCount AS total, b.cancelledCount AS cancelled, " +
+    "b.firstDate, b.lastDate, " +
+    "SUM(CASE WHEN r.status='pending' THEN 1 ELSE 0 END) AS pending, " +
+    "SUM(CASE WHEN r.status='imported' AND t.deletedAt IS NULL AND t.id IS NOT NULL THEN 1 ELSE 0 END) AS imported, " +
+    "SUM(CASE WHEN r.status='imported' AND t.deletedAt IS NOT NULL THEN 1 ELSE 0 END) AS reverted, " +
+    "SUM(CASE WHEN r.status='ignored' THEN 1 ELSE 0 END) AS ignored, " +
+    "SUM(CASE WHEN r.status='transfer' THEN 1 ELSE 0 END) AS transfers, " +
+    "SUM(CASE WHEN r.status<>'pending' THEN 1 ELSE 0 END) AS reviewed " +
+    "FROM bank_import_batches b " +
+    "LEFT JOIN bank_import_rows r ON r.createdAt=b.createdAt AND r.source=b.source " +
+    "LEFT JOIN transactions t ON t.id=r.transactionId " +
+    "WHERE b.source=? GROUP BY b.createdAt ORDER BY b.createdAt DESC;",
     [NUBANK_ACCOUNT_SOURCE],
   );
 }
 
+export async function listImportBatchEventsCore(
+  db: SqlConnection,
+  batchCreatedAt: number,
+): Promise<ImportBatchEvent[]> {
+  return db.getAllAsync<ImportBatchEvent>(
+    "SELECT id, action, affectedCount, occurredAt FROM bank_import_batch_events " +
+    "WHERE source=? AND batchCreatedAt=? ORDER BY occurredAt DESC, id DESC;",
+    [NUBANK_ACCOUNT_SOURCE, batchCreatedAt],
+  );
+}
+
 /**
- * Descartar revisão de um arquivo específico: apaga APENAS pendências.
- * Não toca em transações já aprovadas, ignoradas ou regras; as pendências
- * descartadas poderão ser importadas novamente pelo mesmo CSV.
+ * Descarta somente pendentes; o registro do lote e o evento de cancelamento
+ * permanecem no backup v3 e no histórico.
  */
 export async function cancelPendingBatchCore(
   db: SqlConnection,
@@ -126,23 +169,38 @@ export async function cancelPendingBatchCore(
   if (!Number.isSafeInteger(batchCreatedAt) || batchCreatedAt <= 0) {
     throw new Error("Lote de importação inválido.");
   }
+  const batch = await db.getFirstAsync<{ createdAt: number }>(
+    "SELECT createdAt FROM bank_import_batches WHERE createdAt=? AND source=?;",
+    [batchCreatedAt, NUBANK_ACCOUNT_SOURCE],
+  );
+  if (!batch) throw new Error("Lote não encontrado.");
   const summary = await db.getFirstAsync<{ pending: number; reviewed: number }>(
-    "SELECT SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending, " +
-    "SUM(CASE WHEN status<>'pending' THEN 1 ELSE 0 END) AS reviewed " +
+    "SELECT COUNT(*) FILTER (WHERE status='pending') AS pending, " +
+    "COUNT(*) FILTER (WHERE status<>'pending') AS reviewed " +
     "FROM bank_import_rows WHERE source=? AND createdAt=?;",
     [NUBANK_ACCOUNT_SOURCE, batchCreatedAt],
   );
-  if (!summary || !summary.pending) {
-    throw new Error("Este lote não possui mais movimentações pendentes.");
-  }
-  const outcome = await db.runAsync(
+  if (!summary?.pending) throw new Error("Este lote não possui mais movimentações pendentes.");
+  const deleted = await db.runAsync(
     "DELETE FROM bank_import_rows WHERE source=? AND createdAt=? AND status='pending';",
     [NUBANK_ACCOUNT_SOURCE, batchCreatedAt],
   );
-  if (outcome.changes !== summary.pending) {
+  if (deleted.changes !== summary.pending) {
     throw new Error("O lote mudou durante o cancelamento. Operação revertida.");
   }
-  return { cancelled: outcome.changes, preservedReviewed: summary.reviewed ?? 0 };
+  const now = Date.now();
+  const updated = await db.runAsync(
+    "UPDATE bank_import_batches SET cancelledCount=cancelledCount+?, lastActivityAt=? " +
+    "WHERE createdAt=? AND source=?;",
+    [deleted.changes, now, batchCreatedAt, NUBANK_ACCOUNT_SOURCE],
+  );
+  if (updated.changes !== 1) throw new Error("Lote alterado simultaneamente.");
+  await db.runAsync(
+    "INSERT INTO bank_import_batch_events " +
+    "(source, batchCreatedAt, action, affectedCount, occurredAt) VALUES (?, ?, 'pending_cancelled', ?, ?);",
+    [NUBANK_ACCOUNT_SOURCE, batchCreatedAt, deleted.changes, now],
+  );
+  return { cancelled: deleted.changes, preservedReviewed: summary.reviewed ?? 0 };
 }
 
 export async function getPendingCategoryGroupCore(
@@ -286,7 +344,12 @@ export async function stageNubankRowsCore(
   rows: readonly NubankAccountRow[],
 ): Promise<{ created: number; repeated: number }> {
   let created = 0, repeated = 0;
-  const now = Date.now();
+  const mostRecent = await db.getFirstAsync<{ latest: number | null }>(
+    "SELECT MAX(createdAt) AS latest FROM bank_import_batches;",
+  );
+  const now = Math.max(Date.now(), (mostRecent?.latest ?? 0) + 1);
+  let firstDate: string | null = null;
+  let lastDate: string | null = null;
 
   for (const row of rows) {
     const existing = await db.getFirstAsync<{
@@ -339,6 +402,16 @@ export async function stageNubankRowsCore(
       row.suggestedCategory, row.suggestedAction, now, now,
     ]);
     created++;
+    if (firstDate === null || row.dateISO < firstDate) firstDate = row.dateISO;
+    if (lastDate === null || row.dateISO > lastDate) lastDate = row.dateISO;
+  }
+  if (created > 0 && firstDate && lastDate) {
+    await db.runAsync(
+      "INSERT INTO bank_import_batches " +
+      "(createdAt, source, firstDate, lastDate, originalCount, cancelledCount, lastActivityAt) " +
+      "VALUES (?, ?, ?, ?, ?, 0, ?);",
+      [now, NUBANK_ACCOUNT_SOURCE, firstDate, lastDate, created, now],
+    );
   }
   return { created, repeated };
 }
