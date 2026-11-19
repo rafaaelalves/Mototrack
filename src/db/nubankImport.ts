@@ -3,6 +3,7 @@ import type { SQLiteDatabase } from "expo-sqlite";
 import type { NubankAccountRow } from "../domain/nubankCsv";
 import {
   countPendingCore, listBankImportItemsCore,
+  getExistingTransactionMatchesCore, saveBankImportDraftCore,
   reviewBankItemCore, stageNubankRowsCore, undoBankReviewCore,
   type ReviewDecision,
 } from "./nubankImportCore";
@@ -32,12 +33,33 @@ export async function stageNubankImport(db: SQLiteDatabase, rows: NubankAccountR
   return { ...result, pending };
 }
 
-export async function getNubankReviewQueue(db: SQLiteDatabase) {
-  const [items, pending] = await Promise.all([
-    listBankImportItemsCore(db, "pending", 100),
-    countPendingCore(db),
-  ]);
-  return { items, pending };
+export const NUBANK_REVIEW_PAGE_SIZE = 50;
+
+export async function getNubankReviewQueue(
+  db: SQLiteDatabase,
+  requestedOffset = 0,
+) {
+  const pending = await countPendingCore(db);
+  const offset = Math.min(
+    Math.max(0, requestedOffset),
+    pending === 0 ? 0 : Math.floor((pending - 1) / NUBANK_REVIEW_PAGE_SIZE) * NUBANK_REVIEW_PAGE_SIZE,
+  );
+  const items = await listBankImportItemsCore(
+    db, "pending", NUBANK_REVIEW_PAGE_SIZE, offset,
+  );
+  return { items, pending, offset, pageSize: NUBANK_REVIEW_PAGE_SIZE };
+}
+
+export function getNubankPossibleDuplicates(db: SQLiteDatabase, itemId: number) {
+  return getExistingTransactionMatchesCore(db, itemId);
+}
+
+export function saveNubankPendingCategory(
+  db: SQLiteDatabase,
+  itemId: number,
+  category: string | null,
+) {
+  return saveBankImportDraftCore(db, itemId, category);
 }
 
 export function reviewNubankImport(db: SQLiteDatabase, decision: ReviewDecision) {
