@@ -104,8 +104,9 @@ export default function NubankCsvImportScreen() {
         result.reviewed + (result.reviewed === 1 ? " lançamento revisado." : " lançamentos revisados.") +
         (remember ? " Regra salva para próximas importações." : ""),
       );
-      setCursor(0);
-      await load(queue.offset);
+      const refreshed = await load(queue.offset);
+      // Após remover o registro aprovado da fila, o próximo ocupa seu lugar.
+      setCursor(Math.min(cursor, Math.max(0, refreshed.items.length - 1)));
     } catch (error) {
       Alert.alert("Não foi possível revisar", message(error));
     } finally {
