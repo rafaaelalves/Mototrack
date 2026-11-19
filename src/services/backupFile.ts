@@ -36,6 +36,15 @@ async function saveLocalBackup(
   return file;
 }
 
+/**
+ * Proteção adicional antes da reversão financeira. Uma falha ao gravar/verificar
+ * a cópia aborta a operação. A cópia local NÃO substitui exportação externa.
+ */
+export async function saveReversalRecoveryBackup(db: SQLiteDatabase): Promise<string> {
+  const copy = await saveLocalBackup(await buildBackup(db), "antes-de-reverter-lote");
+  return copy.uri;
+}
+
 export async function exportBackup(db: SQLiteDatabase) {
   try {
     const file = await saveLocalBackup(await buildBackup(db), "backup");
@@ -107,7 +116,7 @@ export async function importBackupFromFile(db: SQLiteDatabase) {
 
     Alert.alert(
       "Confirmar restauração",
-      `Backup de ${readableDate(backup.exportedAt)} com ${backup.transactions.length} lançamentos, ${backup.bankImportRows.length} movimentações de extrato e ${backup.bankImportRules.length} regras.\n\nAtualmente há ${currentCount} lançamentos (incluindo excluídos).\n\n${backup.version === 1 ? "Atenção: backup antigo v1 não contém fila de extratos ou regras. " : ""}Uma cópia local de recuperação v2 será salva e verificada antes de substituir os dados. Deseja continuar?`,
+      `Backup de ${readableDate(backup.exportedAt)} com ${backup.transactions.length} lançamentos, ${backup.bankImportRows.length} movimentações de extrato e ${backup.bankImportRules.length} regras.\n\nAtualmente há ${currentCount} lançamentos (incluindo excluídos).\n\n${backup.version === 1 ? "Atenção: backup antigo v1 não contém fila de extratos ou regras. " : ""}Uma cópia local de recuperação será salva e verificada antes de substituir os dados. Deseja continuar?`,
       [
         { text: "Cancelar", style: "cancel" },
         {
