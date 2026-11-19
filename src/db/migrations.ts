@@ -7,7 +7,7 @@ import type { SQLiteDatabase } from "expo-sqlite";
  * antigo criado antes da adoção do PRAGMA user_version. Nunca apagamos
  * dados para "corrigir" uma migração.
  */
-export const DATABASE_VERSION = 2;
+export const DATABASE_VERSION = 3;
 
 const REQUIRED_LEGACY_COLUMNS = [
   "id",
@@ -145,6 +145,40 @@ export async function migrateDatabase(db: SQLiteDatabase): Promise<void> {
           UNIQUE(source, merchantKey, type)
         );
         PRAGMA user_version = 2;
+      `);
+    }
+
+    if (version.user_version < 3) {
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS bank_import_batches (
+          createdAt INTEGER PRIMARY KEY NOT NULL,
+          source TEXT NOT NULL,
+          firstDate TEXT NOT NULL,
+          lastDate TEXT NOT NULL,
+          originalCount INTEGER NOT NULL CHECK (originalCount >= 0),
+          cancelledCount INTEGER NOT NULL DEFAULT 0 CHECK (cancelledCount >= 0),
+          lastActivityAt INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS bank_import_batch_events (
+          id INTEGER PRIMARY KEY NOT NULL,
+          source TEXT NOT NULL,
+          batchCreatedAt INTEGER NOT NULL,
+          action TEXT NOT NULL CHECK (
+            action IN ('pending_cancelled', 'approved_reversed')
+          ),
+          affectedCount INTEGER NOT NULL CHECK (affectedCount > 0),
+          occurredAt INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_bank_import_events_batch
+          ON bank_import_batch_events(batchCreatedAt, occurredAt);
+        INSERT OR IGNORE INTO bank_import_batches (
+          createdAt, source, firstDate, lastDate, originalCount,
+          cancelledCount, lastActivityAt
+        )
+        SELECT createdAt, MIN(source), MIN(dateISO), MAX(dateISO),
+               COUNT(*), 0, MAX(updatedAt)
+        FROM bank_import_rows GROUP BY createdAt;
+        PRAGMA user_version = 3;
       `);
     }
   });
