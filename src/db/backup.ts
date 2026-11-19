@@ -2,6 +2,7 @@ import { Platform } from "react-native";
 import {
   parseBackupFile, type BackupFile,
   type BankImportBackupRow, type BankImportRuleBackup,
+  type BankImportBatchBackup, type BankImportEventBackup,
 } from "@/src/domain/backupValidation";
 import type { Transaction } from "@/src/domain/transaction";
 import type { SQLiteDatabase } from "expo-sqlite";
@@ -22,12 +23,21 @@ export async function buildBackup(db: SQLiteDatabase): Promise<BackupFile> {
     "SELECT * FROM bank_import_rules ORDER BY id;",
   );
 
+  const bankImportBatches = await db.getAllAsync<BankImportBatchBackup>(
+    "SELECT * FROM bank_import_batches ORDER BY createdAt;",
+  );
+  const bankImportEvents = await db.getAllAsync<BankImportEventBackup>(
+    "SELECT * FROM bank_import_batch_events ORDER BY id;",
+  );
+
   return parseBackupFile({
-    version: 2,
+    version: 3,
     exportedAt: Date.now(),
     transactions: rows,
     bankImportRows,
     bankImportRules,
+    bankImportBatches,
+    bankImportEvents,
   });
 }
 

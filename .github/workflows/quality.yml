@@ -5,6 +5,7 @@ on:
       - feat/nubank-csv-import
       - fix/nubank-review-flow
       - feat/nubank-review-batches-and-learning
+      - feat/nubank-import-history-rollback
   pull_request:
     branches:
       - develop

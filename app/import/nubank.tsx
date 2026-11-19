@@ -12,13 +12,18 @@ import {
   getNubankReviewQueue, getNubankPossibleDuplicates, saveNubankPendingCategory,
   reviewNubankImport, stageNubankImport, undoNubankImport,
   getNubankImportBatches, cancelNubankPendingBatch,
+  getNubankBatchEvents, previewNubankBatchReversal, reverseNubankBatch,
   getNubankCategoryGroup, categorizeNubankPendingGroup, getNubankLearnedCategory,
 } from "@/src/db/nubankImport";
 import type {
   BankImportItem, ExistingTransactionMatch, ImportBatchSummary,
-  LearnedCategory, GroupScope,
+  LearnedCategory, GroupScope, ImportBatchEvent,
 } from "@/src/db/nubankImportCore";
 import { selectNubankAccountCsv } from "@/src/services/nubankImportFile";
+import {
+  saveReversalRecoveryBackup, saveCancellationRecoveryBackup,
+} from "@/src/services/backupFile";
+import type { BatchReversalPreview } from "@/src/db/bankBatchRollback";
 
 function money(value: number): string {
   return (value / 100).toLocaleString("pt-BR", {
@@ -53,6 +58,8 @@ export default function NubankCsvImportScreen() {
   const [compareBusy, setCompareBusy] = useState(false);
   const [batches, setBatches] = useState<ImportBatchSummary[]>([]);
   const [showBatches, setShowBatches] = useState(false);
+  const [expandedHistoryBatch, setExpandedHistoryBatch] = useState<number | null>(null);
+  const [batchEvents, setBatchEvents] = useState<ImportBatchEvent[]>([]);
   const [brandGroup, setBrandGroup] = useState<{ count: number; label: string; examples: string[] } | null>(null);
   const [exactGroup, setExactGroup] = useState<{ count: number; label: string; examples: string[] } | null>(null);
   const [learned, setLearned] = useState<LearnedCategory | null>(null);
@@ -130,14 +137,92 @@ export default function NubankCsvImportScreen() {
     if (busy) return;
     setBusy(true);
     try {
+      const recovery = await saveCancellationRecoveryBackup(db);
       const result = await cancelNubankPendingBatch(db, createdAt);
       setCursor(0);
       await load(0);
       setNotice(result.cancelled + " pendência(s) descartada(s). " +
-        result.preservedReviewed + " movimentação(ões) previamente revisada(s) preservada(s).");
+        result.preservedReviewed + " movimentação(ões) previamente revisada(s) preservada(s). " +
+        "Cópia de recuperação: " + recovery);
+      if (expandedHistoryBatch === createdAt) {
+        setBatchEvents(await getNubankBatchEvents(db, createdAt));
+      }
       setUndoIds([]);
     } catch (error) {
       Alert.alert("Não foi possível cancelar o extrato", message(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function showBatchEvents(createdAt: number) {
+    if (expandedHistoryBatch === createdAt) {
+      setExpandedHistoryBatch(null);
+      setBatchEvents([]);
+      return;
+    }
+    try {
+      const events = await getNubankBatchEvents(db, createdAt);
+      setExpandedHistoryBatch(createdAt);
+      setBatchEvents(events);
+    } catch (error) {
+      Alert.alert("Não foi possível consultar o histórico", message(error));
+    }
+  }
+
+  function confirmReverseBatch(batch: ImportBatchSummary) {
+    if (busy) return;
+    void previewNubankBatchReversal(db, batch.createdAt).then((preview) => {
+      const total = preview.eligible.length + preview.blocked.length + preview.alreadyInactive;
+      if (preview.eligible.length === 0) {
+        Alert.alert(
+          "Nada a reverter",
+          "Este extrato possui " + total + " aprovação(ões) vinculada(s), mas nenhuma é " +
+          "elegível para reversão automática. " + preview.blocked.length +
+          " exigem revisão; " + preview.alreadyInactive + " já estão inativas.",
+        );
+        return;
+      }
+      const details =
+        "Reverter " + preview.eligible.length + " lançamento(s) criados por este extrato?\n\n" +
+        "Receitas a retirar: " + money(preview.incomeCents) +
+        "\nDespesas a retirar: " + money(preview.expenseCents) +
+        "\n\n" + preview.blocked.length + " alterado(s)/bloqueado(s), preservados." +
+        "\n" + preview.alreadyInactive + " já inativo(s)." +
+        "\n\nNenhum registro manual será alterado. Uma cópia local será gravada antes.";
+      Alert.alert("Conferir reversão", details, [
+        { text: "Não reverter", style: "cancel" },
+        {
+          text: "Reverter " + preview.eligible.length,
+          style: "destructive",
+          onPress: () => { void executeReversal(preview); },
+        },
+      ]);
+    }).catch((error) => Alert.alert("Não foi possível calcular a prévia", message(error)));
+  }
+
+  async function executeReversal(preview: BatchReversalPreview) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const recoveryUri = await saveReversalRecoveryBackup(db);
+      const result = await reverseNubankBatch(db, preview);
+      setCursor(0);
+      await load(0);
+      if (expandedHistoryBatch === preview.batchCreatedAt) {
+        setBatchEvents(await getNubankBatchEvents(db, preview.batchCreatedAt));
+      }
+      setNotice(result.reversed + " importação(ões) revertida(s). " +
+        result.blocked + " bloqueada(s) foram preservadas.");
+      Alert.alert(
+        "Reversão concluída",
+        result.reversed + " lançamentos removidos dos totais por exclusão lógica.\n\n" +
+        result.blocked + " bloqueados/alterados não foram mexidos.\n\n" +
+        "Backup de recuperação local:\n" + recoveryUri + "\n" +
+        "Guarde uma cópia fora do aparelho.",
+      );
+    } catch (error) {
+      Alert.alert("Reversão não concluída", message(error));
     } finally {
       setBusy(false);
     }
@@ -366,7 +451,7 @@ export default function NubankCsvImportScreen() {
               style={styles.row}
               onPress={() => setShowBatches((value) => !value)}
             >
-              <Text style={styles.sectionTitle}>Extratos em revisão ({batches.length})</Text>
+              <Text style={styles.sectionTitle}>Histórico de extratos ({batches.length})</Text>
               <Text style={styles.compareText}>{showBatches ? "Ocultar" : "Gerenciar"}</Text>
             </Pressable>
             {showBatches ? batches.map((batch) => (
@@ -378,15 +463,52 @@ export default function NubankCsvImportScreen() {
                   Importado em {new Date(batch.createdAt).toLocaleString("pt-BR")}
                 </Text>
                 <Text style={styles.muted}>
-                  {batch.pending} pendente(s) · {batch.reviewed} já revisada(s)
+                  {batch.pending} pendente(s) · {batch.imported} aprovada(s) ativa(s) ·
+                  {" "}{batch.ignored} ignorada(s) · {batch.transfers} transferência(s)
                 </Text>
+                <Text style={styles.muted}>
+                  {batch.reverted} inativa(s) · {batch.cancelled} pendência(s) cancelada(s)
+                </Text>
+                {batch.pending > 0 ? (
+                  <Pressable
+                    style={styles.cancelBatchButton}
+                    disabled={busy}
+                    onPress={() => confirmCancelBatch(batch)}
+                  >
+                    <Text style={styles.warning}>Descartar pendências deste extrato</Text>
+                  </Pressable>
+                ) : null}
+                {batch.imported > 0 ? (
+                  <Pressable
+                    style={styles.cancelBatchButton}
+                    disabled={busy}
+                    onPress={() => confirmReverseBatch(batch)}
+                  >
+                    <Text style={styles.warning}>Verificar reversão das aprovações</Text>
+                  </Pressable>
+                ) : null}
                 <Pressable
-                  style={styles.cancelBatchButton}
+                  style={styles.compareButton}
                   disabled={busy}
-                  onPress={() => confirmCancelBatch(batch)}
+                  onPress={() => { void showBatchEvents(batch.createdAt); }}
                 >
-                  <Text style={styles.warning}>Descartar pendências deste extrato</Text>
+                  <Text style={styles.compareText}>
+                    {expandedHistoryBatch === batch.createdAt ? "Ocultar ações anteriores" : "Consultar ações anteriores"}
+                  </Text>
                 </Pressable>
+                {expandedHistoryBatch === batch.createdAt ? (
+                  <View style={styles.compareSection}>
+                    {batchEvents.length ? batchEvents.map((event) => (
+                      <Text style={styles.muted} key={event.id}>
+                        {new Date(event.occurredAt).toLocaleString("pt-BR")} ·
+                        {" "}{event.action === "pending_cancelled" ? "Pendências descartadas" : "Aprovações revertidas"}:
+                        {" "}{event.affectedCount}
+                      </Text>
+                    )) : (
+                      <Text style={styles.muted}>Nenhum cancelamento ou reversão anterior registrado.</Text>
+                    )}
+                  </View>
+                ) : null}
               </View>
             )) : null}
           </View>

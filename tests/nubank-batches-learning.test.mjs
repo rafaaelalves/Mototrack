@@ -108,14 +108,16 @@ test("abandonar lote descarta apenas pendentes e preserva aprovados e regras",as
 test("cancelar somente lote selecionado, preservando outras importações",async t=>{
   const {sqlite,db}=await seed(t);
   const original=(await listImportBatchesCore(db))[0].createdAt;
-  // Simula o arquivo anterior, com identificador do lote distinto.
-  await db.runAsync("UPDATE bank_import_rows SET createdAt=? WHERE sourceId=?",[original-100000,id(1)]);
+  await atomic(sqlite,()=>stageNubankRowsCore(db,parseNubankAccountCsv(
+    hdr+row(6,"OUTRO ESTABELECIMENTO")
+  )));
   const batches=await listImportBatchesCore(db);
   assert.equal(batches.length,2);
   await atomic(sqlite,()=>cancelPendingBatchCore(db,original));
   assert.equal(await countPendingCore(db),1);
   const remaining=(await listBankImportItemsCore(db))[0];
-  assert.equal(remaining.sourceId,id(1));
+  assert.equal(remaining.sourceId,id(6));
+  assert.equal((await listImportBatchesCore(db)).length,2);
 });
 
 test("aprende categoria a partir de Oxxo manual e recusa historico contraditorio",async t=>{
