@@ -202,6 +202,7 @@ export async function migrateDatabase(db: SQLiteDatabase): Promise<void> {
             CHECK (status IN ('pending','imported','ignored','transfer','merged')),
           category TEXT,
           transactionId INTEGER,
+          resolutionReason TEXT,
           createdAt INTEGER NOT NULL,
           updatedAt INTEGER NOT NULL,
           UNIQUE(source, sourceId)
@@ -209,11 +210,11 @@ export async function migrateDatabase(db: SQLiteDatabase): Promise<void> {
         INSERT INTO bank_import_rows (
           id, source, sourceId, dateISO, type, amountCents, description,
           merchantKey, suggestedCategory, suggestedAction, status, category,
-          transactionId, createdAt, updatedAt
+          transactionId, resolutionReason, createdAt, updatedAt
         )
         SELECT id, source, sourceId, dateISO, type, amountCents, description,
           merchantKey, suggestedCategory, suggestedAction, status, category,
-          transactionId, createdAt, updatedAt
+          transactionId, NULL, createdAt, updatedAt
         FROM bank_import_rows_v3;
         DROP TABLE bank_import_rows_v3;
         CREATE INDEX IF NOT EXISTS idx_bank_import_pending
