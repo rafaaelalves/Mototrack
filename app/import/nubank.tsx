@@ -43,7 +43,7 @@ export default function NubankImport() {
   const [selectedId,setSelectedId]=useState<number|null>(null);
   const [filter,setFilter]=useState<Filter>("exceptions");
   const [visibleLimit,setVisibleLimit]=useState(20);
-  const [category,setCategory]=useState<CategoryChoice>(null);
+  const [category,setCategory]=useState<string|null>(null);
   const [matches,setMatches]=useState<ExistingTransactionMatch[]>([]);
   const [busy,setBusy]=useState(false);
   const [notice,setNotice]=useState("");
@@ -214,7 +214,7 @@ export default function NubankImport() {
       [{text:"Cancelar",style:"cancel"},{text:"Importar como novo",
       onPress:()=>{void work(async()=>{
         await reviewNubankImport(db,{itemId:row.id,action:"import",
-          category:chosen,applyToSimilar:false,rememberRule:false});
+          category:chosen as ExpenseCategory|IncomeCategory,applyToSimilar:false,rememberRule:false});
         setSelectedId(null);return "Movimentação adicionada como novo lançamento.";
       },analysis?.batchCreatedAt);}}],
     );
