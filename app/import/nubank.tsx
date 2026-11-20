@@ -44,6 +44,7 @@ export default function NubankImport() {
   const [batchId,setBatchId]=useState<number|null>(null);
   const [analysis,setAnalysis]=useState<SmartBatchAnalysis|null>(null);
   const [selectedId,setSelectedId]=useState<number|null>(null);
+  const [showExcludeReasons,setShowExcludeReasons]=useState(false);
   const [filter,setFilter]=useState<Filter>("exceptions");
   const [visibleLimit,setVisibleLimit]=useState(20);
   const [category,setCategory]=useState<string|null>(null);
@@ -81,6 +82,7 @@ export default function NubankImport() {
   useEffect(()=>{
     setCategory(current?.category??null);
     setMatches([]);
+    setShowExcludeReasons(false);
   },[current?.id,current?.category]);
 
   async function work(task:()=>Promise<string>,refreshBatch?:number|null){
@@ -418,7 +420,7 @@ export default function NubankImport() {
                         ))}
                       </>
                     ):null}
-                    {row.status==="non_accounting"?(
+                    {(row.status==="non_accounting"||showExcludeReasons)?(
                       <>
                         <Text style={styles.muted}>
                           Nem todo Pix é transferência entre contas próprias. Escolha o motivo, se for o caso.
@@ -434,7 +436,12 @@ export default function NubankImport() {
                           </Pressable>
                         ))}
                       </>
-                    ):null}
+                    ):(
+                      <Pressable style={styles.action} disabled={busy}
+                        onPress={()=>setShowExcludeReasons(true)}>
+                        <Text style={styles.actionText}>Transferência própria ou fatura já registrada?</Text>
+                      </Pressable>
+                    )}
                     <Text style={styles.muted}>Categoria</Text>
                     <View style={styles.wrap}>
                       {opts.map(o=>(
