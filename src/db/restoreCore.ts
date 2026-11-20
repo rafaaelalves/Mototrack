@@ -20,8 +20,8 @@ const INSERT_TRANSACTION = `
 const INSERT_BANK_ROW =
   "INSERT INTO bank_import_rows (" +
   "id, source, sourceId, dateISO, type, amountCents, description, merchantKey, " +
-  "suggestedCategory, suggestedAction, status, category, transactionId, createdAt, updatedAt) " +
-  "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);";
+  "suggestedCategory, suggestedAction, status, category, transactionId, createdAt, updatedAt, resolutionReason) " +
+  "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);";
 
 const INSERT_BANK_RULE =
   "INSERT INTO bank_import_rules (" +
@@ -86,7 +86,7 @@ export async function replaceTransactions(
       row.id, row.source, row.sourceId, row.dateISO, row.type,
       row.amountCents, row.description, row.merchantKey,
       row.suggestedCategory, row.suggestedAction, row.status,
-      row.category, row.transactionId, row.createdAt, row.updatedAt,
+      row.category, row.transactionId, row.createdAt, row.updatedAt, row.resolutionReason,
     ]);
   }
   for (const rule of data.bankImportRules) {
@@ -95,7 +95,7 @@ export async function replaceTransactions(
       rule.category, rule.updatedAt,
     ]);
   }
-  if (data.version === 3) {
+  if (data.version >= 3) {
     for (const batch of data.bankImportBatches) {
       await connection.runAsync(INSERT_BANK_BATCH, [
         batch.createdAt, batch.source, batch.firstDate, batch.lastDate,
