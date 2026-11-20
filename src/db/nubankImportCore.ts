@@ -675,6 +675,13 @@ export async function analyzeSmartBatchCore(
     "ORDER BY b.dateISO DESC, b.id DESC;",
     [NUBANK_ACCOUNT_SOURCE, createdAt],
   );
+  // Duas compras distintas podem ter exatamente mesmo dia e valor.
+  // Tratar ambas como exceções; não bloquear a confirmação do resto do CSV.
+  const fingerprints = new Map<string,number>();
+  for(const row of records){
+    const key=row.dateISO+":"+row.type+":"+row.amountCents;
+    fingerprints.set(key,(fingerprints.get(key)??0)+1);
+  }
   const learning = new Map<string, LearnedCategory | null>();
   const items: SmartReviewRow[] = [];
   let ready=0, duplicate=0, category=0, nonAccounting=0;
@@ -705,7 +712,8 @@ export async function analyzeSmartBatchCore(
       }
     }
     const status: SmartReviewStatus =
-      row.existingCount>0 ? "duplicate" :
+      (row.existingCount>0 || (fingerprints.get(row.dateISO+":"+row.type+":"+row.amountCents)??0)>1)
+        ? "duplicate" :
       hint ? "non_accounting" :
       effectiveCategory ? "ready" : "category";
     if(status==="duplicate")duplicate++;
