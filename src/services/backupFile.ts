@@ -45,6 +45,11 @@ export async function saveReversalRecoveryBackup(db: SQLiteDatabase): Promise<st
   return copy.uri;
 }
 
+export async function saveImportRecoveryBackup(db: SQLiteDatabase): Promise<string> {
+  const copy = await saveLocalBackup(await buildBackup(db), "antes-de-importar-lote");
+  return copy.uri;
+}
+
 export async function saveCancellationRecoveryBackup(db: SQLiteDatabase): Promise<string> {
   const copy = await saveLocalBackup(await buildBackup(db), "antes-de-descartar-extrato");
   return copy.uri;

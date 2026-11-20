@@ -16,7 +16,8 @@ export type BankImportBackupRow = {
   merchantKey: string;
   suggestedCategory: string | null;
   suggestedAction: "import" | "ignore" | "transfer" | null;
-  status: "pending" | "imported" | "ignored" | "transfer";
+  status: "pending" | "imported" | "ignored" | "transfer" | "merged";
+  resolutionReason: string | null;
   category: string | null;
   transactionId: number | null;
   createdAt: number;
@@ -50,7 +51,7 @@ export type BankImportEventBackup = {
   occurredAt: number;
 };
 export type BackupFile = {
-  version: 1 | 2 | 3;
+  version: 1 | 2 | 3 | 4;
   exportedAt: number;
   transactions: Transaction[];
   bankImportRows: BankImportBackupRow[];
@@ -176,7 +177,7 @@ function parseTransaction(value: unknown, index: number): Transaction {
 
 
 const actions = new Set(["import", "ignore", "transfer"]);
-const statuses = new Set(["pending", "imported", "ignored", "transfer"]);
+const statuses = new Set(["pending", "imported", "ignored", "transfer", "merged"]);
 
 function nonemptyText(value: unknown, label: string, max: number): string {
   if (typeof value !== "string" || !value.trim() || value.length > max) {
@@ -231,7 +232,7 @@ function parseBankRow(value: unknown, index: number): BankImportBackupRow {
     throw new Error(label + ": estado inválido.");
   }
   const transactionId = optionalInteger(row.transactionId, label + " vínculo");
-  if (status === "imported" && transactionId === null) {
+  if ((status === "imported" || status === "merged") && transactionId === null) {
     throw new Error(label + ": importado sem vínculo com transação.");
   }
   return {
@@ -248,6 +249,7 @@ function parseBankRow(value: unknown, index: number): BankImportBackupRow {
     status: status as BankImportBackupRow["status"],
     category: validBankCategory(row.category, type, label),
     transactionId,
+    resolutionReason: optionalText(row.resolutionReason, label + " motivo"),
     createdAt: integerAt(row.createdAt, label + " criação"),
     updatedAt: integerAt(row.updatedAt, label + " atualização"),
   };
@@ -314,8 +316,8 @@ function parseBankEvent(value: unknown, index: number): BankImportEventBackup {
  */
 export function parseBackupFile(input: unknown): BackupFile {
   const file = objectAt(input, "O backup");
-  if (file.version !== 1 && file.version !== 2 && file.version !== 3) {
-    throw new Error("Versão de backup incompatível. Esperadas: 1, 2 ou 3.");
+  if (file.version !== 1 && file.version !== 2 && file.version !== 3 && file.version !== 4) {
+    throw new Error("Versão de backup incompatível. Esperadas: 1, 2, 3 ou 4.");
   }
   const exportedAt = integerAt(file.exportedAt, "Data de exportação");
   if (!Array.isArray(file.transactions)) {
@@ -401,7 +403,7 @@ export function parseBackupFile(input: unknown): BackupFile {
     }
   }
   return {
-    version: 3, exportedAt, transactions, bankImportRows: rows,
+    version: file.version, exportedAt, transactions, bankImportRows: rows,
     bankImportRules: rules, bankImportBatches: batches, bankImportEvents: events,
   };
 }

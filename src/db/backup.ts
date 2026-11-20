@@ -31,7 +31,7 @@ export async function buildBackup(db: SQLiteDatabase): Promise<BackupFile> {
   );
 
   return parseBackupFile({
-    version: 3,
+    version: 4,
     exportedAt: Date.now(),
     transactions: rows,
     bankImportRows,

@@ -1,4 +1,8 @@
 import { deleteTransaction, getTransactionById } from "@/src/db/transactions";
+import {
+  getTransactionBankOrigin, visibleTransactionNotes,
+  type BankOrigin,
+} from "@/src/db/bankProvenance";
 
 import {
   expenseCategoryLabel,
@@ -34,11 +38,16 @@ export default function TransactionDetails() {
   const id = params.id ? Number(params.id) : NaN;
 
   const [tx, setTx] = useState<Transaction | null>(null);
+  const [bankOrigin, setBankOrigin] = useState<BankOrigin | null>(null);
 
   const load = useCallback(async () => {
     if (!Number.isFinite(id)) return;
-    const row = await getTransactionById(db, id);
+    const [row, origin] = await Promise.all([
+      getTransactionById(db, id),
+      getTransactionBankOrigin(db, id),
+    ]);
     setTx(row);
+    setBankOrigin(origin);
   }, [db, id]);
 
   useFocusEffect(
@@ -155,7 +164,26 @@ export default function TransactionDetails() {
               </View>
             ) : null}
 
-            {tx.notes ? (
+            {bankOrigin ? (
+              <View style={styles.notesBox}>
+                <View style={styles.metaRow}>
+                  <Note size={18} weight="duotone" color="#FFB35A" />
+                  <Text style={[styles.metaText, { fontWeight: "700" }]}>
+                    Origem bancária · Nubank
+                  </Text>
+                </View>
+                <Text style={styles.notesText}>
+                  {bankOrigin.status === "merged"
+                    ? "Conciliado com um lançamento já existente"
+                    : "Importado do extrato"}
+                </Text>
+                <Text style={styles.notesText}>
+                  {bankOrigin.description} · {formatDateBR(bankOrigin.dateISO)}
+                </Text>
+              </View>
+            ) : null}
+
+            {visibleTransactionNotes(tx.notes) ? (
               <View style={styles.notesBox}>
                 <View style={styles.metaRow}>
                   <Note
@@ -167,7 +195,7 @@ export default function TransactionDetails() {
                     Descrição
                   </Text>
                 </View>
-                <Text style={styles.notesText}>{tx.notes}</Text>
+                <Text style={styles.notesText}>{visibleTransactionNotes(tx.notes)}</Text>
               </View>
             ) : null}
 

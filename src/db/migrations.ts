@@ -7,7 +7,7 @@ import type { SQLiteDatabase } from "expo-sqlite";
  * antigo criado antes da adoção do PRAGMA user_version. Nunca apagamos
  * dados para "corrigir" uma migração.
  */
-export const DATABASE_VERSION = 3;
+export const DATABASE_VERSION = 4;
 
 const REQUIRED_LEGACY_COLUMNS = [
   "id",
@@ -179,6 +179,53 @@ export async function migrateDatabase(db: SQLiteDatabase): Promise<void> {
                COUNT(*), 0, MAX(updatedAt)
         FROM bank_import_rows GROUP BY createdAt;
         PRAGMA user_version = 3;
+      `);
+    }
+
+    if (version.user_version < 4) {
+      // SQLite não permite expandir CHECK de status com ADD COLUMN.
+      // Recriar tabela com cópia explícita dentro da transação de migração.
+      await db.execAsync(`
+        ALTER TABLE bank_import_rows RENAME TO bank_import_rows_v3;
+        CREATE TABLE bank_import_rows (
+          id INTEGER PRIMARY KEY NOT NULL,
+          source TEXT NOT NULL,
+          sourceId TEXT NOT NULL,
+          dateISO TEXT NOT NULL,
+          type TEXT NOT NULL CHECK (type IN ('income','expense')),
+          amountCents INTEGER NOT NULL CHECK (amountCents > 0),
+          description TEXT NOT NULL,
+          merchantKey TEXT NOT NULL,
+          suggestedCategory TEXT,
+          suggestedAction TEXT,
+          status TEXT NOT NULL DEFAULT 'pending'
+            CHECK (status IN ('pending','imported','ignored','transfer','merged')),
+          category TEXT,
+          transactionId INTEGER,
+          resolutionReason TEXT,
+          createdAt INTEGER NOT NULL,
+          updatedAt INTEGER NOT NULL,
+          UNIQUE(source, sourceId)
+        );
+        INSERT INTO bank_import_rows (
+          id, source, sourceId, dateISO, type, amountCents, description,
+          merchantKey, suggestedCategory, suggestedAction, status, category,
+          transactionId, resolutionReason, createdAt, updatedAt
+        )
+        SELECT id, source, sourceId, dateISO, type, amountCents, description,
+          merchantKey, suggestedCategory, suggestedAction, status, category,
+          transactionId, NULL, createdAt, updatedAt
+        FROM bank_import_rows_v3;
+        DROP TABLE bank_import_rows_v3;
+        CREATE INDEX IF NOT EXISTS idx_bank_import_pending
+          ON bank_import_rows(source, status, dateISO);
+        CREATE INDEX IF NOT EXISTS idx_bank_import_merchant
+          ON bank_import_rows(source, merchantKey, type, status);
+        CREATE INDEX IF NOT EXISTS idx_bank_import_batch
+          ON bank_import_rows(source, createdAt, status);
+        CREATE INDEX IF NOT EXISTS idx_bank_import_link
+          ON bank_import_rows(transactionId);
+        PRAGMA user_version = 4;
       `);
     }
   });

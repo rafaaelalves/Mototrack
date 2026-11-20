@@ -108,7 +108,7 @@ test("parser v2 bloqueia ID duplicado, regra duplicada e versão superior",async
   const dupRule=structuredClone(file);
   dupRule.bankImportRules.push({...dupRule.bankImportRules[0],id:99});
   assert.throws(()=>parseBackupFile(dupRule),/duplicada/);
-  assert.throws(()=>parseBackupFile({...file,version:4}),/Versão de backup/);
+  assert.throws(()=>parseBackupFile({...file,version:5}),/Versão de backup/);
 });
 
 test("backup legado v1 segue aceito; não inventa regras ou pendências",async(t)=>{

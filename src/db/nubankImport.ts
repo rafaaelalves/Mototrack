@@ -8,7 +8,11 @@ import {
   cancelPendingBatchCore, getPendingCategoryGroupCore,
   categorizePendingGroupCore, getLearnedCategoryCore,
   reviewBankItemCore, stageNubankRowsCore, undoBankReviewCore,
-  type GroupScope, type ReviewDecision,
+  analyzeSmartBatchCore, createReadyPreview, approveReadyBatchCore,
+  mergeExistingBankRowCore, skipBankRowCore, rememberCategoryGroupCore,
+  listMergedBankRowsCore, unmergeBankRowCore,
+  listExcludedBankRowsCore, reopenExcludedBankRowCore,
+  type GroupScope, type ReviewDecision, type SmartReadyPreview, type SkipReason,
 } from "./nubankImportCore";
 import {
   previewBankBatchReversalCore, reverseBankBatchCore,
@@ -120,4 +124,47 @@ export function previewNubankBatchReversal(db: SQLiteDatabase, createdAt: number
 }
 export function reverseNubankBatch(db: SQLiteDatabase, preview: BatchReversalPreview) {
   return atomic(db, tx => reverseBankBatchCore(tx, preview));
+}
+
+export function analyzeNubankBatch(db: SQLiteDatabase, createdAt: number) {
+  return analyzeSmartBatchCore(db, createdAt);
+}
+
+export function previewNubankReady(analysis: Awaited<ReturnType<typeof analyzeSmartBatchCore>>) {
+  return createReadyPreview(analysis);
+}
+
+export function approveNubankReady(db: SQLiteDatabase, preview: SmartReadyPreview) {
+  return atomic(db, tx => approveReadyBatchCore(tx, preview));
+}
+
+export function mergeNubankWithExisting(db: SQLiteDatabase, rowId: number, transactionId: number) {
+  return atomic(db, tx => mergeExistingBankRowCore(tx, rowId, transactionId));
+}
+
+export function excludeNubankRow(db: SQLiteDatabase, rowId: number, reason: SkipReason) {
+  return atomic(db, tx => skipBankRowCore(tx, rowId, reason));
+}
+
+export function rememberNubankCategoryGroup(
+  db: SQLiteDatabase,
+  rowId: number,
+  category: string,
+  scope: GroupScope,
+) {
+  return atomic(db, tx => rememberCategoryGroupCore(tx, rowId, category, scope));
+}
+
+export function getNubankMergedRows(db:SQLiteDatabase,createdAt:number){
+  return listMergedBankRowsCore(db,createdAt);
+}
+export function unmergeNubankRow(db:SQLiteDatabase,rowId:number){
+  return atomic(db,tx=>unmergeBankRowCore(tx,rowId));
+}
+
+export function getNubankExcludedRows(db:SQLiteDatabase,createdAt:number){
+  return listExcludedBankRowsCore(db,createdAt);
+}
+export function reopenNubankExcludedRow(db:SQLiteDatabase,rowId:number){
+  return atomic(db,tx=>reopenExcludedBankRowCore(tx,rowId));
 }

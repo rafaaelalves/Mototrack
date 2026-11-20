@@ -55,7 +55,7 @@ test("preserva lançamentos excluídos logicamente", () => {
 
 test("rejeita versão desconhecida, inclusive superior", () => {
   assert.throws(
-    () => parseBackupFile({ ...example(), version: 4 }),
+    () => parseBackupFile({ ...example(), version: 5 }),
     /Versão de backup incompatível/,
   );
 });

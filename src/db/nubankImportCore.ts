@@ -21,6 +21,7 @@ export type BankImportItem = {
   suggestedAction: ImportAction | null;
   status: ImportStatus;
   category: string | null;
+  resolutionReason: string | null;
   transactionId: number | null;
   ruleAction: ImportAction | null;
   ruleCategory: string | null;
@@ -58,6 +59,7 @@ export type ImportBatchSummary = {
   reviewed: number;
   ignored: number;
   transfers: number;
+  merged: number;
   reverted: number;
   cancelled: number;
   firstDate: string;
@@ -138,6 +140,7 @@ export async function listImportBatchesCore(db: SqlConnection): Promise<ImportBa
     "SUM(CASE WHEN r.status='imported' AND t.deletedAt IS NOT NULL THEN 1 ELSE 0 END) AS reverted, " +
     "SUM(CASE WHEN r.status='ignored' THEN 1 ELSE 0 END) AS ignored, " +
     "SUM(CASE WHEN r.status='transfer' THEN 1 ELSE 0 END) AS transfers, " +
+    "SUM(CASE WHEN r.status='merged' THEN 1 ELSE 0 END) AS merged, " +
     "SUM(CASE WHEN r.status<>'pending' THEN 1 ELSE 0 END) AS reviewed " +
     "FROM bank_import_batches b " +
     "LEFT JOIN bank_import_rows r ON r.createdAt=b.createdAt AND r.source=b.source " +
@@ -606,4 +609,351 @@ export async function undoBankReviewCore(db: SqlConnection, rowId: number): Prom
     "UPDATE bank_import_rows SET status='pending', category=NULL, transactionId=NULL, updatedAt=? WHERE id=?;",
     [now, rowId],
   );
+}
+
+
+export type SmartReviewStatus = "ready" | "duplicate" | "category" | "non_accounting";
+export type SmartReviewRow = {
+  id: number;
+  sourceId: string;
+  dateISO: string;
+  type: TransactionType;
+  amountCents: number;
+  description: string;
+  merchantKey: string;
+  category: string | null;
+  categoryOrigin: "manual" | "rule" | "pattern" | "history" | null;
+  status: SmartReviewStatus;
+  existingCount: number;
+  nonAccountingHint: "transfer" | "ignore" | null;
+};
+export type SmartBatchAnalysis = {
+  batchCreatedAt: number;
+  count: number;
+  ready: number;
+  duplicate: number;
+  category: number;
+  nonAccounting: number;
+  incomeCents: number;
+  expenseCents: number;
+  items: SmartReviewRow[];
+};
+export type SmartReadyPreview = {
+  batchCreatedAt: number;
+  entries: { id: number; category: string; type: TransactionType; amountCents: number }[];
+  incomeCents: number;
+  expenseCents: number;
+};
+export type SkipReason = "duplicate_rejected" | "not_relevant" |
+  "own_transfer" | "already_recorded_card_payment" | "other_non_accounting";
+
+function validExplicitCategory(type: TransactionType, category: string): boolean {
+  return type === "income" ? ALLOWED_INCOME.has(category) : ALLOWED_EXPENSE.has(category);
+}
+
+/** Nenhuma gravação: classificação automática é sempre uma proposta revisável. */
+export async function analyzeSmartBatchCore(
+  db: SqlConnection,
+  createdAt: number,
+): Promise<SmartBatchAnalysis> {
+  if (!Number.isSafeInteger(createdAt) || createdAt < 1) {
+    throw new Error("Extrato inválido.");
+  }
+  const exists = await db.getFirstAsync<{ createdAt: number }>(
+    "SELECT createdAt FROM bank_import_batches WHERE source=? AND createdAt=?;",
+    [NUBANK_ACCOUNT_SOURCE, createdAt],
+  );
+  if (!exists) throw new Error("Extrato não encontrado.");
+  type Candidate = BankImportItem & { bankSuggestedAction: ImportAction | null; existingCount: number };
+  const records = await db.getAllAsync<Candidate>(
+    "SELECT b.*, r.category AS ruleCategory, r.action AS ruleAction, " +
+    "(SELECT COUNT(*) FROM transactions t WHERE t.deletedAt IS NULL " +
+    "AND t.dateISO=b.dateISO AND t.type=b.type AND t.amountCents=b.amountCents) " +
+    "AS existingCount FROM bank_import_rows b " +
+    "LEFT JOIN bank_import_rules r ON r.source=b.source AND r.merchantKey=b.merchantKey " +
+    "AND r.type=b.type WHERE b.source=? AND b.createdAt=? AND b.status='pending' " +
+    "ORDER BY b.dateISO DESC, b.id DESC;",
+    [NUBANK_ACCOUNT_SOURCE, createdAt],
+  );
+  // Duas compras distintas podem ter exatamente mesmo dia e valor.
+  // Tratar ambas como exceções; não bloquear a confirmação do resto do CSV.
+  const fingerprints = new Map<string,number>();
+  for(const row of records){
+    const key=row.dateISO+":"+row.type+":"+row.amountCents;
+    fingerprints.set(key,(fingerprints.get(key)??0)+1);
+  }
+  const learning = new Map<string, LearnedCategory | null>();
+  const items: SmartReviewRow[] = [];
+  let ready=0, duplicate=0, category=0, nonAccounting=0;
+  let incomeCents=0, expenseCents=0;
+  for(const row of records) {
+    let effectiveCategory: string | null = null;
+    let origin: SmartReviewRow["categoryOrigin"] = null;
+    for(const [value,from] of [
+      [row.category,"manual"],[row.ruleCategory,"rule"],[row.suggestedCategory,"pattern"],
+    ] as const) {
+      if (value && validExplicitCategory(row.type,value)) {
+        effectiveCategory=value; origin=from; break;
+      }
+    }
+    const hint: SmartReviewRow["nonAccountingHint"] =
+      row.category === null && (row.ruleAction==="transfer" || row.ruleAction==="ignore" ||
+        row.suggestedAction==="transfer" || row.suggestedAction==="ignore")
+        ? ((row.ruleAction === "ignore" || row.suggestedAction === "ignore") ? "ignore" : "transfer") : null;
+    // Nunca usar aprendizado histórico para resolver automaticamente coincidências.
+    if (!effectiveCategory && !hint && row.existingCount===0) {
+      const lookup = row.type + ":" + row.merchantKey;
+      if (!learning.has(lookup)) {
+        learning.set(lookup, await getLearnedCategoryCore(db,row.merchantKey,row.type));
+      }
+      const found = learning.get(lookup);
+      if (found && validExplicitCategory(row.type,found.category)) {
+        effectiveCategory=found.category; origin="history";
+      }
+    }
+    const status: SmartReviewStatus =
+      (row.existingCount>0 || (fingerprints.get(row.dateISO+":"+row.type+":"+row.amountCents)??0)>1)
+        ? "duplicate" :
+      hint ? "non_accounting" :
+      effectiveCategory ? "ready" : "category";
+    if(status==="duplicate")duplicate++;
+    else if(status==="non_accounting")nonAccounting++;
+    else if(status==="category")category++;
+    else {
+      ready++;
+      if(row.type==="income")incomeCents+=row.amountCents;
+      else expenseCents+=row.amountCents;
+    }
+    items.push({
+      id:row.id,sourceId:row.sourceId,dateISO:row.dateISO,
+      type:row.type,amountCents:row.amountCents,
+      description:row.description,merchantKey:row.merchantKey,
+      category:effectiveCategory,categoryOrigin:origin,
+      status,existingCount:row.existingCount,nonAccountingHint:hint,
+    });
+  }
+  return { batchCreatedAt:createdAt,count:records.length,ready,duplicate,
+    category,nonAccounting,incomeCents,expenseCents,items };
+}
+
+export function createReadyPreview(analysis: SmartBatchAnalysis): SmartReadyPreview {
+  return {
+    batchCreatedAt:analysis.batchCreatedAt,
+    entries:analysis.items.filter(x=>x.status==="ready"&&x.category!==null)
+      .map(x=>({id:x.id,category:x.category!,type:x.type,amountCents:x.amountCents})),
+    incomeCents:analysis.incomeCents,expenseCents:analysis.expenseCents,
+  };
+}
+
+function readyPreviewEquals(a:SmartReadyPreview,b:SmartReadyPreview):boolean {
+  return a.batchCreatedAt===b.batchCreatedAt &&
+    a.incomeCents===b.incomeCents && a.expenseCents===b.expenseCents &&
+    JSON.stringify(a.entries)===JSON.stringify(b.entries);
+}
+
+/** Deve ser executado sob transação exclusiva: falha reverte o lote inteiro. */
+export async function approveReadyBatchCore(
+  db: SqlConnection,
+  expected: SmartReadyPreview,
+): Promise<{ created:number;incomeCents:number;expenseCents:number }> {
+  if (!expected.entries.length)throw new Error("Não há lançamentos prontos.");
+  const fresh=createReadyPreview(await analyzeSmartBatchCore(db,expected.batchCreatedAt));
+  if (!readyPreviewEquals(fresh,expected)) {
+    throw new Error("A análise mudou. Atualize a prévia antes de confirmar.");
+  }
+  const now=Date.now();
+  for(const entry of fresh.entries) {
+    const row=await db.getFirstAsync<{sourceId:string;description:string;dateISO:string;type:string;amountCents:number}>(
+      "SELECT sourceId,description,dateISO,type,amountCents FROM bank_import_rows " +
+      "WHERE id=? AND source=? AND createdAt=? AND status='pending';",
+      [entry.id,NUBANK_ACCOUNT_SOURCE,expected.batchCreatedAt],
+    );
+    if(!row || row.type!==entry.type || row.amountCents!==entry.amountCents) {
+      throw new Error("Movimentação modificada durante a confirmação.");
+    }
+    const possible=await db.getFirstAsync<{total:number}>(
+      "SELECT COUNT(*) AS total FROM transactions WHERE deletedAt IS NULL " +
+      "AND dateISO=? AND type=? AND amountCents=?;",
+      [row.dateISO,row.type,row.amountCents],
+    );
+    if((possible?.total??0)!==0)throw new Error(
+      "Possível duplicata encontrada durante a confirmação. Nenhum lançamento foi importado.",
+    );
+    const ins=await db.runAsync(IMPORT_TRANSACTION,[
+      row.dateISO,row.type,row.amountCents,row.description,now,now,
+      provenance(row.sourceId),entry.category,
+    ]);
+    const updated=await db.runAsync(
+      "UPDATE bank_import_rows SET status='imported', category=?, " +
+      "transactionId=?, resolutionReason=NULL, updatedAt=? " +
+      "WHERE id=? AND source=? AND status='pending';",
+      [entry.category,ins.lastInsertRowId,now,entry.id,NUBANK_ACCOUNT_SOURCE],
+    );
+    if(updated.changes!==1)throw new Error("Conflito ao confirmar movimentação.");
+  }
+  await db.runAsync(
+    "UPDATE bank_import_batches SET lastActivityAt=? WHERE createdAt=? AND source=?;",
+    [now,expected.batchCreatedAt,NUBANK_ACCOUNT_SOURCE],
+  );
+  return {created:fresh.entries.length,incomeCents:fresh.incomeCents,expenseCents:fresh.expenseCents};
+}
+
+/** Mesclar significa vincular comprovante bancário sem alterar o lançamento original. */
+export async function mergeExistingBankRowCore(
+  db:SqlConnection,rowId:number,transactionId:number,
+):Promise<void> {
+  if(!Number.isSafeInteger(rowId)||rowId<1||!Number.isSafeInteger(transactionId)||transactionId<1){
+    throw new Error("Identificador de conciliação inválido.");
+  }
+  const row=await db.getFirstAsync<BankImportItem>(
+    "SELECT * FROM bank_import_rows WHERE id=? AND source=? AND status='pending';",
+    [rowId,NUBANK_ACCOUNT_SOURCE],
+  );
+  if(!row)throw new Error("Movimentação não está mais pendente.");
+  const original=await db.getFirstAsync<{
+    id:number;dateISO:string;type:string;amountCents:number;category:string|null;
+  }>(
+    "SELECT id,dateISO,type,amountCents,category FROM transactions WHERE id=? AND deletedAt IS NULL;",
+    [transactionId],
+  );
+  if(!original || original.dateISO!==row.dateISO || original.type!==row.type ||
+      original.amountCents!==row.amountCents){
+    throw new Error("O lançamento selecionado não corresponde à mesma data, tipo e valor.");
+  }
+  const linked=await db.getFirstAsync<{total:number}>(
+    "SELECT COUNT(*) AS total FROM bank_import_rows " +
+    "WHERE transactionId=? AND status IN ('imported','merged');",
+    [transactionId],
+  );
+  if((linked?.total??0)>0)throw new Error(
+    "Esta transação já está vinculada a outro registro bancário. Revise individualmente.",
+  );
+  const changed=await db.runAsync(
+    "UPDATE bank_import_rows SET status='merged', transactionId=?, category=?, " +
+    "resolutionReason='linked_existing',updatedAt=? WHERE id=? AND source=? AND status='pending';",
+    [transactionId,original.category,Date.now(),rowId,NUBANK_ACCOUNT_SOURCE],
+  );
+  if(changed.changes!==1)throw new Error("A conciliação mudou. Atualize a tela.");
+}
+
+/** Resolução explícita: nenhuma transação é criada para o dashboard. */
+export async function skipBankRowCore(
+  db:SqlConnection,rowId:number,reason:SkipReason,
+):Promise<void> {
+  const reasons:SkipReason[]=["duplicate_rejected","not_relevant","own_transfer",
+    "already_recorded_card_payment","other_non_accounting"];
+  if(!reasons.includes(reason))throw new Error("Motivo não reconhecido.");
+  const status=reason==="own_transfer"||reason==="already_recorded_card_payment"||
+    reason==="other_non_accounting"?"transfer":"ignored";
+  const changed=await db.runAsync(
+    "UPDATE bank_import_rows SET status=?,resolutionReason=?,category=NULL," +
+    "transactionId=NULL,updatedAt=? WHERE id=? AND source=? AND status='pending';",
+    [status,reason,Date.now(),rowId,NUBANK_ACCOUNT_SOURCE],
+  );
+  if(changed.changes!==1)throw new Error("Movimentação já revisada ou inexistente.");
+}
+
+/**
+ * Categoria em massa e regra futura são escolhas distintas.
+ * A regra é uma SUGESTÃO, nunca autorização de importação automática.
+ */
+export async function rememberCategoryGroupCore(
+  db:SqlConnection,rowId:number,category:string,scope:GroupScope,
+):Promise<{categorised:number;rules:number}> {
+  const source=await db.getFirstAsync<{merchantKey:string;type:TransactionType}>(
+    "SELECT merchantKey,type FROM bank_import_rows WHERE id=? AND source=? AND status='pending';",
+    [rowId,NUBANK_ACCOUNT_SOURCE],
+  );
+  if(!source || !validExplicitCategory(source.type,category))throw new Error("Categoria ou lançamento inválido.");
+  const selector=selectionPredicate(scope,source.merchantKey);
+  const params=[NUBANK_ACCOUNT_SOURCE,source.type,...selector.values];
+  const stores=await db.getAllAsync<{merchantKey:string}>(
+    "SELECT DISTINCT merchantKey FROM bank_import_rows WHERE source=? " +
+    "AND type=? AND status='pending' AND "+selector.clause+" ORDER BY merchantKey;",
+    params,
+  );
+  if(!stores.length)throw new Error("Grupo não encontrado.");
+  const categorised=await categorizePendingGroupCore(db,rowId,category,scope);
+  const now=Date.now();
+  for(const store of stores){
+    await db.runAsync(
+      "INSERT INTO bank_import_rules (source,merchantKey,type,action,category,updatedAt) " +
+      "VALUES (?,?,?,'import',?,?) ON CONFLICT(source,merchantKey,type) " +
+      "DO UPDATE SET action='import',category=excluded.category,updatedAt=excluded.updatedAt;",
+      [NUBANK_ACCOUNT_SOURCE,store.merchantKey,source.type,category,now],
+    );
+  }
+  return {categorised,rules:stores.length};
+}
+
+
+export type MergedBankRow = {
+  id:number;
+  dateISO:string;
+  amountCents:number;
+  description:string;
+  transactionId:number;
+  originalTitle:string;
+};
+
+/** Permite corrigir uma mesclagem sem tocar na transação manual original. */
+export async function listMergedBankRowsCore(
+  db:SqlConnection,createdAt:number,
+):Promise<MergedBankRow[]> {
+  return db.getAllAsync<MergedBankRow>(
+    "SELECT b.id,b.dateISO,b.amountCents,b.description,b.transactionId," +
+    "t.title AS originalTitle FROM bank_import_rows b " +
+    "JOIN transactions t ON t.id=b.transactionId " +
+    "WHERE b.source=? AND b.createdAt=? AND b.status='merged' " +
+    "ORDER BY b.dateISO DESC,b.id DESC LIMIT 200;",
+    [NUBANK_ACCOUNT_SOURCE,createdAt],
+  );
+}
+export async function unmergeBankRowCore(
+  db:SqlConnection,rowId:number,
+):Promise<void> {
+  const row=await db.getFirstAsync<{status:string;transactionId:number|null}>(
+    "SELECT status,transactionId FROM bank_import_rows " +
+    "WHERE id=? AND source=?;",
+    [rowId,NUBANK_ACCOUNT_SOURCE],
+  );
+  if(!row || row.status!=="merged" || row.transactionId===null){
+    throw new Error("Este vínculo já foi desfeito ou é inválido.");
+  }
+  const change=await db.runAsync(
+    "UPDATE bank_import_rows SET status='pending',transactionId=NULL," +
+    "category=NULL,resolutionReason=NULL,updatedAt=? " +
+    "WHERE id=? AND source=? AND status='merged' AND transactionId=?;",
+    [Date.now(),rowId,NUBANK_ACCOUNT_SOURCE,row.transactionId],
+  );
+  if(change.changes!==1)throw new Error("Vínculo alterado simultaneamente.");
+}
+
+
+export type ExcludedBankRow = {
+  id:number;
+  dateISO:string;
+  amountCents:number;
+  description:string;
+  status:"ignored"|"transfer";
+  resolutionReason:string|null;
+};
+export async function listExcludedBankRowsCore(
+  db:SqlConnection,createdAt:number,
+):Promise<ExcludedBankRow[]> {
+  return db.getAllAsync<ExcludedBankRow>(
+    "SELECT id,dateISO,amountCents,description,status,resolutionReason FROM bank_import_rows " +
+    "WHERE source=? AND createdAt=? AND status IN ('ignored','transfer') " +
+    "ORDER BY dateISO DESC,id DESC LIMIT 200;",
+    [NUBANK_ACCOUNT_SOURCE,createdAt],
+  );
+}
+export async function reopenExcludedBankRowCore(db:SqlConnection,rowId:number):Promise<void> {
+  const changed=await db.runAsync(
+    "UPDATE bank_import_rows SET status='pending',category=NULL,resolutionReason=NULL," +
+    "transactionId=NULL,updatedAt=? WHERE id=? AND source=? " +
+    "AND status IN ('ignored','transfer') AND transactionId IS NULL;",
+    [Date.now(),rowId,NUBANK_ACCOUNT_SOURCE],
+  );
+  if(changed.changes!==1)throw new Error("Esta exclusão já foi desfeita ou está vinculada a uma transação.");
 }

@@ -2,7 +2,7 @@ import type { ExpenseCategory, IncomeCategory } from "./categories";
 import type { TransactionType } from "./transaction";
 
 export type ImportAction = "import" | "ignore" | "transfer";
-export type ImportStatus = "pending" | "imported" | "ignored" | "transfer";
+export type ImportStatus = "pending" | "imported" | "ignored" | "transfer" | "merged";
 export type NubankAccountRow = {
   sourceId: string;
   dateISO: string;
