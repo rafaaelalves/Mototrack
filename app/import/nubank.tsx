@@ -12,7 +12,7 @@ import {
 } from "@/src/domain/categories";
 import type { ExistingTransactionMatch, ImportBatchSummary,
   GroupScope, SmartBatchAnalysis, SmartReviewRow, SkipReason,
-  MergedBankRow } from "@/src/db/nubankImportCore";
+  MergedBankRow, ExcludedBankRow } from "@/src/db/nubankImportCore";
 import type { BatchReversalPreview } from "@/src/db/bankBatchRollback";
 import {
   analyzeNubankBatch, previewNubankReady, approveNubankReady,
@@ -20,6 +20,7 @@ import {
   saveNubankPendingCategory, categorizeNubankPendingGroup, rememberNubankCategoryGroup,
   mergeNubankWithExisting, excludeNubankRow, reviewNubankImport,
   getNubankMergedRows, unmergeNubankRow,
+  getNubankExcludedRows, reopenNubankExcludedRow,
   stageNubankImport, cancelNubankPendingBatch,
   previewNubankBatchReversal, reverseNubankBatch, getNubankBatchEvents,
 } from "@/src/db/nubankImport";
@@ -54,6 +55,8 @@ export default function NubankImport() {
   const [events,setEvents]=useState<ImportBatchEvent[]>([]);
   const [expandedMerged,setExpandedMerged]=useState<number|null>(null);
   const [mergedRows,setMergedRows]=useState<MergedBankRow[]>([]);
+  const [expandedExcluded,setExpandedExcluded]=useState<number|null>(null);
+  const [excludedRows,setExcludedRows]=useState<ExcludedBankRow[]>([]);
 
   const reload=useCallback(async (preferred?:number|null)=>{
     const all=await getNubankImportBatches(db);
@@ -186,6 +189,24 @@ export default function NubankImport() {
          await unmergeNubankRow(db,row.id);
          setMergedRows(await getNubankMergedRows(db,createdAt));
          return "Vínculo removido. A movimentação voltou à revisão.";
+       },createdAt);}}],
+    );
+  }
+  async function showExcluded(createdAt:number){
+    if(expandedExcluded===createdAt){setExpandedExcluded(null);return;}
+    try{setExcludedRows(await getNubankExcludedRows(db,createdAt));setExpandedExcluded(createdAt);}
+    catch(e){Alert.alert("Falha ao listar decisões",errorText(e));}
+  }
+  function reopenExcluded(row:ExcludedBankRow,createdAt:number){
+    if(busy)return;
+    Alert.alert("Voltar para revisão?",
+      "Reabrir '"+row.description+"' ("+money(row.amountCents)+")? "+
+      "Nenhum lançamento será criado automaticamente.",
+      [{text:"Cancelar",style:"cancel"},
+       {text:"Reabrir movimentação",onPress:()=>{void work(async()=>{
+         await reopenNubankExcludedRow(db,row.id);
+         setExcludedRows(await getNubankExcludedRows(db,createdAt));
+         return "Movimentação reaberta para revisão.";
        },createdAt);}}],
     );
   }
@@ -503,6 +524,28 @@ export default function NubankImport() {
                         </View>
                       ))
                     ):null}
+                  </>
+                ):null}
+                {batch.ignored+batch.transfers>0?(
+                  <>
+                    <Pressable style={styles.action} disabled={busy}
+                      onPress={()=>{void showExcluded(batch.createdAt);}}>
+                      <Text style={styles.actionText}>
+                        {expandedExcluded===batch.createdAt?"Ocultar decisões":"Rever itens não importados"}
+                      </Text>
+                    </Pressable>
+                    {expandedExcluded===batch.createdAt?excludedRows.map(row=>(
+                      <View key={row.id} style={styles.compare}>
+                        <Text style={styles.compareTitle}>{row.description}</Text>
+                        <Text style={styles.muted}>
+                          {dateBr(row.dateISO)} · {money(row.amountCents)} · {row.resolutionReason??row.status}
+                        </Text>
+                        <Pressable style={styles.action} disabled={busy}
+                          onPress={()=>reopenExcluded(row,batch.createdAt)}>
+                          <Text style={styles.actionText}>Voltar à revisão</Text>
+                        </Pressable>
+                      </View>
+                    )):null}
                   </>
                 ):null}
                 <Pressable style={styles.action} onPress={()=>{void viewEvents(batch.createdAt);}}>
