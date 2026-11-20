@@ -21,6 +21,7 @@ export type BankImportItem = {
   suggestedAction: ImportAction | null;
   status: ImportStatus;
   category: string | null;
+  resolutionReason: string | null;
   transactionId: number | null;
   ruleAction: ImportAction | null;
   ruleCategory: string | null;
@@ -58,6 +59,7 @@ export type ImportBatchSummary = {
   reviewed: number;
   ignored: number;
   transfers: number;
+  merged: number;
   reverted: number;
   cancelled: number;
   firstDate: string;
@@ -138,6 +140,7 @@ export async function listImportBatchesCore(db: SqlConnection): Promise<ImportBa
     "SUM(CASE WHEN r.status='imported' AND t.deletedAt IS NOT NULL THEN 1 ELSE 0 END) AS reverted, " +
     "SUM(CASE WHEN r.status='ignored' THEN 1 ELSE 0 END) AS ignored, " +
     "SUM(CASE WHEN r.status='transfer' THEN 1 ELSE 0 END) AS transfers, " +
+    "SUM(CASE WHEN r.status='merged' THEN 1 ELSE 0 END) AS merged, " +
     "SUM(CASE WHEN r.status<>'pending' THEN 1 ELSE 0 END) AS reviewed " +
     "FROM bank_import_batches b " +
     "LEFT JOIN bank_import_rows r ON r.createdAt=b.createdAt AND r.source=b.source " +
