@@ -7,7 +7,7 @@ import { replaceTransactions } from "../src/db/restoreCore.ts";
 import { parseNubankAccountCsv } from "../src/domain/nubankCsv.ts";
 import {
   analyzeSmartBatchCore, createReadyPreview, approveReadyBatchCore,
-  mergeExistingBankRowCore, skipBankRowCore, rememberCategoryGroupCore,
+  mergeExistingBankRowCore, unmergeBankRowCore, skipBankRowCore, rememberCategoryGroupCore,
   listImportBatchesCore, listBankImportItemsCore, stageNubankRowsCore,
 } from "../src/db/nubankImportCore.ts";
 
@@ -92,6 +92,21 @@ test("mesclar vincula dados do banco ao manual sem duplicar nem sobrescrever cam
   await atomic(other.sql,()=>replaceTransactions(other.db,backup));
   assert.equal(other.sql.prepare("SELECT status FROM bank_import_rows WHERE id=?").get(row.id).status,"merged");
   assert.equal(active(other.sql),1);
+});
+
+test("desfazer mesclagem devolve pendência sem editar transação original",async t=>{
+  const {sql,db,batch}=await seed(t);
+  const row=(await analyzeSmartBatchCore(db,batch.createdAt)).items.find(x=>x.status==="duplicate");
+  const before=sql.prepare("SELECT * FROM transactions WHERE id=1").get();
+  await atomic(sql,()=>mergeExistingBankRowCore(db,row.id,1));
+  await atomic(sql,()=>unmergeBankRowCore(db,row.id));
+  assert.deepEqual(sql.prepare("SELECT * FROM transactions WHERE id=1").get(),before);
+  const bank=sql.prepare("SELECT status,transactionId,resolutionReason FROM bank_import_rows WHERE id=?").get(row.id);
+  assert.equal(bank.status,"pending");
+  assert.equal(bank.transactionId,null);
+  assert.equal(bank.resolutionReason,null);
+  assert.equal((await analyzeSmartBatchCore(db,batch.createdAt)).duplicate,1);
+  await assert.rejects(()=>unmergeBankRowCore(db,row.id),/já foi desfeito/);
 });
 
 test("aprovação em lote importa só itens prontos e preserva candidato duplicado",async t=>{
