@@ -6,6 +6,7 @@ on:
       - fix/nubank-review-flow
       - feat/nubank-review-batches-and-learning
       - feat/nubank-import-history-rollback
+      - feat/nubank-smart-review
   pull_request:
     branches:
       - develop
