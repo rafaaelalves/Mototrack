@@ -8,6 +8,7 @@ import { parseNubankAccountCsv } from "../src/domain/nubankCsv.ts";
 import {
   analyzeSmartBatchCore, createReadyPreview, approveReadyBatchCore,
   mergeExistingBankRowCore, unmergeBankRowCore, skipBankRowCore, rememberCategoryGroupCore,
+  reopenExcludedBankRowCore, listExcludedBankRowsCore,
   listImportBatchesCore, listBankImportItemsCore, stageNubankRowsCore,
 } from "../src/db/nubankImportCore.ts";
 
@@ -162,6 +163,21 @@ test("não contabilizar guarda motivo sem alterar lançamentos",async t=>{
   assert.equal(saved.status,"transfer");
   assert.equal(saved.resolutionReason,"own_transfer");
   assert.equal(active(sql),1);
+});
+
+test("desfazer 'não importar' devolve para revisão sem criar transação",async t=>{
+  const {sql,db,batch}=await seed(t);
+  const row=(await analyzeSmartBatchCore(db,batch.createdAt)).items.find(x=>x.amountCents===1150);
+  await atomic(sql,()=>skipBankRowCore(db,row.id,"duplicate_rejected"));
+  assert.equal((await listExcludedBankRowsCore(db,batch.createdAt)).length,1);
+  assert.equal(active(sql),1);
+  await atomic(sql,()=>reopenExcludedBankRowCore(db,row.id));
+  const again=sql.prepare("SELECT status,resolutionReason,transactionId FROM bank_import_rows WHERE id=?").get(row.id);
+  assert.equal(again.status,"pending");
+  assert.equal(again.resolutionReason,null);
+  assert.equal(again.transactionId,null);
+  assert.equal(active(sql),1);
+  await assert.rejects(()=>reopenExcludedBankRowCore(db,row.id),/já foi desfeita/);
 });
 
 test("categorizar semelhantes e lembrar regra não cria despesas nem aprova duplicatas",async t=>{
