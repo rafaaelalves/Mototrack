@@ -11,13 +11,15 @@ import {
   type ExpenseCategory, type IncomeCategory,
 } from "@/src/domain/categories";
 import type { ExistingTransactionMatch, ImportBatchSummary,
-  GroupScope, SmartBatchAnalysis, SmartReviewRow, SkipReason } from "@/src/db/nubankImportCore";
+  GroupScope, SmartBatchAnalysis, SmartReviewRow, SkipReason,
+  MergedBankRow } from "@/src/db/nubankImportCore";
 import type { BatchReversalPreview } from "@/src/db/bankBatchRollback";
 import {
   analyzeNubankBatch, previewNubankReady, approveNubankReady,
   getNubankImportBatches, getNubankPossibleDuplicates, getNubankCategoryGroup,
   saveNubankPendingCategory, categorizeNubankPendingGroup, rememberNubankCategoryGroup,
   mergeNubankWithExisting, excludeNubankRow, reviewNubankImport,
+  getNubankMergedRows, unmergeNubankRow,
   stageNubankImport, cancelNubankPendingBatch,
   previewNubankBatchReversal, reverseNubankBatch, getNubankBatchEvents,
 } from "@/src/db/nubankImport";
@@ -50,6 +52,8 @@ export default function NubankImport() {
   const [showHistory,setShowHistory]=useState(false);
   const [eventBatch,setEventBatch]=useState<number|null>(null);
   const [events,setEvents]=useState<ImportBatchEvent[]>([]);
+  const [expandedMerged,setExpandedMerged]=useState<number|null>(null);
+  const [mergedRows,setMergedRows]=useState<MergedBankRow[]>([]);
 
   const reload=useCallback(async (preferred?:number|null)=>{
     const all=await getNubankImportBatches(db);
@@ -166,6 +170,24 @@ export default function NubankImport() {
     if(eventBatch===id){setEventBatch(null);return;}
     try{setEvents(await getNubankBatchEvents(db,id));setEventBatch(id);}
     catch(e){Alert.alert("Histórico indisponível",errorText(e));}
+  }
+  async function showMerged(createdAt:number){
+    if(expandedMerged===createdAt){setExpandedMerged(null);return;}
+    try{setMergedRows(await getNubankMergedRows(db,createdAt));setExpandedMerged(createdAt);}
+    catch(e){Alert.alert("Falha ao listar vínculos",errorText(e));}
+  }
+  function unmerge(row:MergedBankRow,createdAt:number){
+    if(busy)return;
+    Alert.alert("Desfazer mesclagem?",
+      "Retirar o vínculo bancário de '"+row.originalTitle+"' ("+money(row.amountCents)+
+      ")?\n\nA transação existente não será alterada. A movimentação do CSV voltará à revisão.",
+      [{text:"Cancelar",style:"cancel"},
+       {text:"Desfazer vínculo",onPress:()=>{void work(async()=>{
+         await unmergeNubankRow(db,row.id);
+         setMergedRows(await getNubankMergedRows(db,createdAt));
+         return "Vínculo removido. A movimentação voltou à revisão.";
+       },createdAt);}}],
+    );
   }
   function chooseItem(row:SmartReviewRow){
     if(selectedId===row.id){setSelectedId(null);return;}
@@ -458,6 +480,30 @@ export default function NubankImport() {
                   <Pressable style={styles.action} onPress={()=>revert(batch)} disabled={busy}>
                     <Text style={styles.warning}>Verificar reversão das aprovações</Text>
                   </Pressable>
+                ):null}
+                {batch.merged>0?(
+                  <>
+                    <Pressable style={styles.action}
+                      onPress={()=>{void showMerged(batch.createdAt);}} disabled={busy}>
+                      <Text style={styles.actionText}>
+                        {expandedMerged===batch.createdAt?"Ocultar mesclagens":"Consultar e desfazer mesclagens"}
+                      </Text>
+                    </Pressable>
+                    {expandedMerged===batch.createdAt?(
+                      mergedRows.map(row=>(
+                        <View key={row.id} style={styles.compare}>
+                          <Text style={styles.compareTitle}>{row.description}</Text>
+                          <Text style={styles.muted}>
+                            {dateBr(row.dateISO)} · {money(row.amountCents)} · Vinculada a {row.originalTitle}
+                          </Text>
+                          <Pressable style={styles.action} disabled={busy}
+                            onPress={()=>unmerge(row,batch.createdAt)}>
+                            <Text style={styles.warning}>Desfazer vínculo sem excluir lançamento</Text>
+                          </Pressable>
+                        </View>
+                      ))
+                    ):null}
+                  </>
                 ):null}
                 <Pressable style={styles.action} onPress={()=>{void viewEvents(batch.createdAt);}}>
                   <Text style={styles.actionText}>{eventBatch===batch.createdAt?"Ocultar eventos":"Consultar eventos anteriores"}</Text>
