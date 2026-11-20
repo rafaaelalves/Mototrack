@@ -885,3 +885,46 @@ export async function rememberCategoryGroupCore(
   }
   return {categorised,rules:stores.length};
 }
+
+
+export type MergedBankRow = {
+  id:number;
+  dateISO:string;
+  amountCents:number;
+  description:string;
+  transactionId:number;
+  originalTitle:string;
+};
+
+/** Permite corrigir uma mesclagem sem tocar na transação manual original. */
+export async function listMergedBankRowsCore(
+  db:SqlConnection,createdAt:number,
+):Promise<MergedBankRow[]> {
+  return db.getAllAsync<MergedBankRow>(
+    "SELECT b.id,b.dateISO,b.amountCents,b.description,b.transactionId," +
+    "t.title AS originalTitle FROM bank_import_rows b " +
+    "JOIN transactions t ON t.id=b.transactionId " +
+    "WHERE b.source=? AND b.createdAt=? AND b.status='merged' " +
+    "ORDER BY b.dateISO DESC,b.id DESC LIMIT 200;",
+    [NUBANK_ACCOUNT_SOURCE,createdAt],
+  );
+}
+export async function unmergeBankRowCore(
+  db:SqlConnection,rowId:number,
+):Promise<void> {
+  const row=await db.getFirstAsync<{status:string;transactionId:number|null}>(
+    "SELECT status,transactionId FROM bank_import_rows " +
+    "WHERE id=? AND source=?;",
+    [rowId,NUBANK_ACCOUNT_SOURCE],
+  );
+  if(!row || row.status!=="merged" || row.transactionId===null){
+    throw new Error("Este vínculo já foi desfeito ou é inválido.");
+  }
+  const change=await db.runAsync(
+    "UPDATE bank_import_rows SET status='pending',transactionId=NULL," +
+    "category=NULL,resolutionReason=NULL,updatedAt=? " +
+    "WHERE id=? AND source=? AND status='merged' AND transactionId=?;",
+    [Date.now(),rowId,NUBANK_ACCOUNT_SOURCE,row.transactionId],
+  );
+  if(change.changes!==1)throw new Error("Vínculo alterado simultaneamente.");
+}
