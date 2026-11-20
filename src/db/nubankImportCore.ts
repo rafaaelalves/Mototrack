@@ -928,3 +928,32 @@ export async function unmergeBankRowCore(
   );
   if(change.changes!==1)throw new Error("Vínculo alterado simultaneamente.");
 }
+
+
+export type ExcludedBankRow = {
+  id:number;
+  dateISO:string;
+  amountCents:number;
+  description:string;
+  status:"ignored"|"transfer";
+  resolutionReason:string|null;
+};
+export async function listExcludedBankRowsCore(
+  db:SqlConnection,createdAt:number,
+):Promise<ExcludedBankRow[]> {
+  return db.getAllAsync<ExcludedBankRow>(
+    "SELECT id,dateISO,amountCents,description,status,resolutionReason FROM bank_import_rows " +
+    "WHERE source=? AND createdAt=? AND status IN ('ignored','transfer') " +
+    "ORDER BY dateISO DESC,id DESC LIMIT 200;",
+    [NUBANK_ACCOUNT_SOURCE,createdAt],
+  );
+}
+export async function reopenExcludedBankRowCore(db:SqlConnection,rowId:number):Promise<void> {
+  const changed=await db.runAsync(
+    "UPDATE bank_import_rows SET status='pending',category=NULL,resolutionReason=NULL," +
+    "transactionId=NULL,updatedAt=? WHERE id=? AND source=? " +
+    "AND status IN ('ignored','transfer') AND transactionId IS NULL;",
+    [Date.now(),rowId,NUBANK_ACCOUNT_SOURCE],
+  );
+  if(changed.changes!==1)throw new Error("Esta exclusão já foi desfeita ou está vinculada a uma transação.");
+}
