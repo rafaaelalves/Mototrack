@@ -3,794 +3,521 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { useSQLiteContext } from "expo-sqlite";
 import {
   ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet,
-  Switch, Text, View,
+  Text, View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { ExpenseCategoryOptions, IncomeCategoryOptions, type ExpenseCategory, type IncomeCategory } from "@/src/domain/categories";
-import type { ImportAction } from "@/src/domain/nubankCsv";
 import {
-  getNubankReviewQueue, getNubankPossibleDuplicates, saveNubankPendingCategory,
-  reviewNubankImport, stageNubankImport, undoNubankImport,
-  getNubankImportBatches, cancelNubankPendingBatch,
-  getNubankBatchEvents, previewNubankBatchReversal, reverseNubankBatch,
-  getNubankCategoryGroup, categorizeNubankPendingGroup, getNubankLearnedCategory,
-} from "@/src/db/nubankImport";
-import type {
-  BankImportItem, ExistingTransactionMatch, ImportBatchSummary,
-  LearnedCategory, GroupScope, ImportBatchEvent,
-} from "@/src/db/nubankImportCore";
-import { selectNubankAccountCsv } from "@/src/services/nubankImportFile";
-import {
-  saveReversalRecoveryBackup, saveCancellationRecoveryBackup,
-} from "@/src/services/backupFile";
+  ExpenseCategoryOptions, IncomeCategoryOptions,
+  type ExpenseCategory, type IncomeCategory,
+} from "@/src/domain/categories";
+import type { ExistingTransactionMatch, ImportBatchSummary,
+  GroupScope, SmartBatchAnalysis, SmartReviewRow, SkipReason } from "@/src/db/nubankImportCore";
 import type { BatchReversalPreview } from "@/src/db/bankBatchRollback";
+import {
+  analyzeNubankBatch, previewNubankReady, approveNubankReady,
+  getNubankImportBatches, getNubankPossibleDuplicates, getNubankCategoryGroup,
+  saveNubankPendingCategory, categorizeNubankPendingGroup, rememberNubankCategoryGroup,
+  mergeNubankWithExisting, excludeNubankRow, reviewNubankImport,
+  stageNubankImport, cancelNubankPendingBatch,
+  previewNubankBatchReversal, reverseNubankBatch, getNubankBatchEvents,
+} from "@/src/db/nubankImport";
+import type { ImportBatchEvent } from "@/src/db/nubankImportCore";
+import {
+  saveImportRecoveryBackup, saveCancellationRecoveryBackup,
+  saveReversalRecoveryBackup,
+} from "@/src/services/backupFile";
+import { selectNubankAccountCsv } from "@/src/services/nubankImportFile";
 
-function money(value: number): string {
-  return (value / 100).toLocaleString("pt-BR", {
-    style: "currency", currency: "BRL",
-  });
-}
-function dateBr(iso: string): string {
-  const [year, month, day] = iso.split("-");
-  return day + "/" + month + "/" + year;
-}
-function message(error: unknown) {
-  return error instanceof Error ? error.message : "Não foi possível concluir a operação.";
-}
+const money = (v:number) => (v/100).toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
+const dateBr = (iso:string) => {const [y,m,d]=iso.split("-");return d+"/"+m+"/"+y;};
+const errorText = (e:unknown) => e instanceof Error ? e.message : "Operação não concluída.";
+type Filter = "exceptions"|"ready"|"all";
+type CategoryChoice = ExpenseCategory|IncomeCategory|null;
 
-type Queue = { items: BankImportItem[]; pending: number; offset: number; pageSize: number };
-export default function NubankCsvImportScreen() {
-  const db = useSQLiteContext();
-  const router = useRouter();
-  const [queue, setQueue] = useState<Queue>({
-    items: [], pending: 0, offset: 0, pageSize: 50,
-  });
-  const [cursor, setCursor] = useState(0);
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState("");
-  const [category, setCategory] = useState<string | null>(null);
-  const [suggestedAction, setSuggestedAction] = useState<ImportAction>("import");
-  const [similar, setSimilar] = useState(false);
-  const [remember, setRemember] = useState(false);
-  const [undoIds, setUndoIds] = useState<number[]>([]);
-  const [compareOpen, setCompareOpen] = useState(false);
-  const [matches, setMatches] = useState<ExistingTransactionMatch[]>([]);
-  const [compareBusy, setCompareBusy] = useState(false);
-  const [batches, setBatches] = useState<ImportBatchSummary[]>([]);
-  const [showBatches, setShowBatches] = useState(false);
-  const [expandedHistoryBatch, setExpandedHistoryBatch] = useState<number | null>(null);
-  const [batchEvents, setBatchEvents] = useState<ImportBatchEvent[]>([]);
-  const [brandGroup, setBrandGroup] = useState<{ count: number; label: string; examples: string[] } | null>(null);
-  const [exactGroup, setExactGroup] = useState<{ count: number; label: string; examples: string[] } | null>(null);
-  const [learned, setLearned] = useState<LearnedCategory | null>(null);
+export default function NubankImport() {
+  const db=useSQLiteContext();
+  const router=useRouter();
+  const [batches,setBatches]=useState<ImportBatchSummary[]>([]);
+  const [batchId,setBatchId]=useState<number|null>(null);
+  const [analysis,setAnalysis]=useState<SmartBatchAnalysis|null>(null);
+  const [selectedId,setSelectedId]=useState<number|null>(null);
+  const [filter,setFilter]=useState<Filter>("exceptions");
+  const [visibleLimit,setVisibleLimit]=useState(20);
+  const [category,setCategory]=useState<CategoryChoice>(null);
+  const [matches,setMatches]=useState<ExistingTransactionMatch[]>([]);
+  const [busy,setBusy]=useState(false);
+  const [notice,setNotice]=useState("");
+  const [showHistory,setShowHistory]=useState(false);
+  const [eventBatch,setEventBatch]=useState<number|null>(null);
+  const [events,setEvents]=useState<ImportBatchEvent[]>([]);
 
-  const load = useCallback(async (pageOffset = 0) => {
-    const [result, availableBatches] = await Promise.all([
-      getNubankReviewQueue(db, pageOffset),
-      getNubankImportBatches(db),
-    ]);
-    setQueue(result);
-    setBatches(availableBatches);
-    setCursor((index) => Math.min(index, Math.max(0, result.items.length - 1)));
-    return result;
-  }, [db]);
+  const reload=useCallback(async (preferred?:number|null)=>{
+    const all=await getNubankImportBatches(db);
+    setBatches(all);
+    const picked=all.find(x=>x.createdAt===(preferred??batchId)) ??
+      all.find(x=>x.pending>0) ?? all[0] ?? null;
+    setBatchId(picked?.createdAt??null);
+    if(picked){
+      const next=await analyzeNubankBatch(db,picked.createdAt);
+      setAnalysis(next);
+      setSelectedId(old => next.items.some(x=>x.id===old)?old:null);
+    }else{
+      setAnalysis(null);setSelectedId(null);
+    }
+  },[db,batchId]);
 
-  useFocusEffect(useCallback(() => {
-    void load().catch((error) => Alert.alert("Erro ao carregar extratos", message(error)));
-  }, [load]));
+  useFocusEffect(useCallback(()=>{
+    void reload().catch(e=>Alert.alert("Falha ao abrir os extratos",errorText(e)));
+  },[reload]));
 
-  const item = queue.items[cursor] ?? null;
-  useEffect(() => {
-    setCategory(item?.category ?? item?.ruleCategory ?? item?.suggestedCategory ?? null);
-    setSuggestedAction(item?.ruleAction ?? item?.suggestedAction ?? "import");
-    setSimilar(false);
-    setRemember(false);
-    setCompareOpen(false);
+  const current=analysis?.items.find(x=>x.id===selectedId)??null;
+  useEffect(()=>{
+    setCategory(current?.category??null);
     setMatches([]);
-  }, [item?.id]);
+  },[current?.id,current?.category]);
 
-  useEffect(() => {
-    let active = true;
-    setBrandGroup(null);
-    setExactGroup(null);
-    setLearned(null);
-    if (!item) return () => { active = false; };
-    void Promise.all([
-      getNubankCategoryGroup(db, item.id, "brand").catch(() => null),
-      getNubankCategoryGroup(db, item.id, "exact"),
-      getNubankLearnedCategory(db, item.merchantKey, item.type),
-    ]).then(([group, exact, suggestion]) => {
-      if (!active) return;
-      setBrandGroup(group);
-      setExactGroup(exact);
-      setLearned(suggestion);
-      if (suggestion && item.category === null && item.ruleCategory === null) {
-        setCategory((current) => current ?? suggestion.category);
+  async function work(task:()=>Promise<string>,refreshBatch?:number|null){
+    if(busy)return;
+    setBusy(true);
+    try{const response=await task();await reload(refreshBatch);setNotice(response);}
+    catch(e){Alert.alert("Não foi possível concluir",errorText(e));}
+    finally{setBusy(false);}
+  }
+  async function chooseFile(){
+    if(busy)return;
+    setBusy(true);
+    try{
+      const rows=await selectNubankAccountCsv();
+      if(!rows)return;
+      const result=await stageNubankImport(db,rows);
+      const all=await getNubankImportBatches(db);
+      setBatches(all);
+      const selected=all.find(b=>b.pending>0)??all[0];
+      if(selected){
+        setBatchId(selected.createdAt);
+        setAnalysis(await analyzeNubankBatch(db,selected.createdAt));
       }
-    }).catch((error) => {
-      if (active) setNotice("Sugestões indisponíveis: " + message(error));
-    });
-    return () => { active = false; };
-  }, [db, item?.id]);
-
-
-  function confirmCancelBatch(batch: ImportBatchSummary) {
-    if (busy) return;
+      setSelectedId(null);setFilter("exceptions");
+      setNotice(result.created+" movimentações novas; "+result.repeated+
+        " já conhecidas. Revise o resumo antes de confirmar.");
+    }catch(e){Alert.alert("Extrato não importado",errorText(e));}
+    finally{setBusy(false);}
+  }
+  function approveReady(){
+    if(!analysis||!analysis.ready||busy)return;
+    const preview=previewNubankReady(analysis);
     Alert.alert(
-      "Abandonar revisão deste extrato?",
-      "Extrato de " + dateBr(batch.firstDate) + " a " + dateBr(batch.lastDate) +
-      ".\n\nDescartar " + batch.pending + " movimentações PENDENTES? " +
-      batch.reviewed + " decisões já concluídas serão preservadas. " +
-      "Esta operação não apaga transações financeiras e você pode importar o CSV novamente.",
-      [
-        { text: "Manter pendências", style: "cancel" },
-        {
-          text: "Descartar " + batch.pending,
-          style: "destructive",
-          onPress: () => { void cancelBatch(batch.createdAt); },
-        },
-      ],
+      "Confirmar lançamentos prontos?",
+      preview.entries.length+" lançamentos sem duplicata detectada serão adicionados.\n\n"+
+      "Entradas: "+money(preview.incomeCents)+"\nSaídas: "+money(preview.expenseCents)+
+      "\n\nPossíveis duplicatas e pendências NÃO serão importadas. "+
+      "Uma cópia de recuperação será criada antes.",
+      [{text:"Revisar mais",style:"cancel"},{
+        text:"Importar "+preview.entries.length,
+        onPress:()=>{void work(async()=>{
+          const backup=await saveImportRecoveryBackup(db);
+          const done=await approveNubankReady(db,preview);
+          return done.created+" lançamentos importados. Cópia local: "+backup;
+        },preview.batchCreatedAt);},
+      }],
+    );
+  }
+  function abandon(batch:ImportBatchSummary){
+    if(!batch.pending||busy)return;
+    Alert.alert("Descartar pendências deste extrato?",
+      dateBr(batch.firstDate)+" a "+dateBr(batch.lastDate)+
+      "\n\nDescartar "+batch.pending+" pendências? "+
+      batch.imported+" aprovadas e "+batch.merged+" mescladas serão preservadas. "+
+      "O histórico permanece disponível.",
+      [{text:"Cancelar",style:"cancel"},
+      {text:"Descartar pendências",style:"destructive",onPress:()=>{void work(async()=>{
+        const recovery=await saveCancellationRecoveryBackup(db);
+        const result=await cancelNubankPendingBatch(db,batch.createdAt);
+        return result.cancelled+" pendências descartadas. Cópia local: "+recovery;
+      },batch.createdAt);}}],
+    );
+  }
+  function revert(batch:ImportBatchSummary){
+    if(busy)return;
+    void previewNubankBatchReversal(db,batch.createdAt).then(p=>{
+      if(!p.eligible.length){
+        Alert.alert("Nada a reverter",p.blocked.length+" bloqueadas; "+
+          p.alreadyInactive+" já inativas. Lançamentos mesclados nunca são excluídos.");
+        return;
+      }
+      Alert.alert("Reverter apenas lançamentos importados?",
+        p.eligible.length+" elegíveis.\nReceitas: "+money(p.incomeCents)+
+        "\nDespesas: "+money(p.expenseCents)+"\n"+p.blocked.length+
+        " bloqueados serão preservados.\n\nTransações manuais e mescladas não serão excluídas.",
+        [{text:"Cancelar",style:"cancel"},
+        {text:"Reverter "+p.eligible.length,style:"destructive",
+          onPress:()=>{void applyReversal(p);}}],
+      );
+    }).catch(e=>Alert.alert("Falha na prévia",errorText(e)));
+  }
+  async function applyReversal(preview:BatchReversalPreview){
+    await work(async()=>{
+      const backup=await saveReversalRecoveryBackup(db);
+      const result=await reverseNubankBatch(db,preview);
+      return result.reversed+" lançamentos revertidos por exclusão lógica. Cópia local: "+backup;
+    },preview.batchCreatedAt);
+  }
+  async function viewEvents(id:number){
+    if(eventBatch===id){setEventBatch(null);return;}
+    try{setEvents(await getNubankBatchEvents(db,id));setEventBatch(id);}
+    catch(e){Alert.alert("Histórico indisponível",errorText(e));}
+  }
+  function chooseItem(row:SmartReviewRow){
+    if(selectedId===row.id){setSelectedId(null);return;}
+    setSelectedId(row.id);
+    if(row.status==="duplicate"){
+      void getNubankPossibleDuplicates(db,row.id).then(setMatches)
+        .catch(e=>Alert.alert("Comparação indisponível",errorText(e)));
+    }
+  }
+  function categorizeOne(){
+    if(!current||!category)return;
+    void work(async()=>{
+      await saveNubankPendingCategory(db,current.id,category);
+      return "Categoria salva. Esta movimentação ainda não foi importada.";
+    },analysis?.batchCreatedAt);
+  }
+  function categorizeGroup(scope:GroupScope){
+    if(!current||!category)return;
+    const rowId=current.id,chosen=category;
+    void getNubankCategoryGroup(db,rowId,scope).then(group=>{
+      if(!group.count){Alert.alert("Nada a classificar","As movimentações do grupo já foram classificadas.");return;}
+      const examples=group.examples.map(x=>x.split(":").slice(1).join(":")).join(", ");
+      Alert.alert("Classificar "+group.count+" movimentações?",
+        "Exemplos: "+examples+"\n\nAs categorias existentes serão preservadas. "+
+        "Nenhuma transação será importada ainda.",
+        [{text:"Cancelar",style:"cancel"},
+         {text:"Só neste extrato",onPress:()=>{void work(async()=>{
+           const n=await categorizeNubankPendingGroup(db,rowId,chosen,scope);
+           return n+" movimentações classificadas; nenhuma importada.";
+         },analysis?.batchCreatedAt);}},
+         {text:"Lembrar nas próximas",onPress:()=>{void work(async()=>{
+           const n=await rememberNubankCategoryGroup(db,rowId,chosen,scope);
+           return n.categorised+" classificadas; "+n.rules+" regra(s) salvas para sugestões futuras.";
+         },analysis?.batchCreatedAt);}}],
+      );
+    }).catch(e=>Alert.alert("Grupo indisponível",errorText(e)));
+  }
+  function addIndividual(){
+    if(!current||busy)return;
+    const row=current,chosen=category;
+    if(!chosen){Alert.alert("Categoria necessária","Escolha uma categoria para incluir a movimentação.");return;}
+    Alert.alert(row.status==="duplicate"?"Adicionar uma segunda transação?":"Importar movimentação?",
+      "O Mototrack criará uma nova "+(row.type==="income"?"receita":"despesa")+
+      " de "+money(row.amountCents)+". "+
+      (row.status==="duplicate"?"Há outra movimentação com mesma data, tipo e valor.":""),
+      [{text:"Cancelar",style:"cancel"},{text:"Importar como novo",
+      onPress:()=>{void work(async()=>{
+        await reviewNubankImport(db,{itemId:row.id,action:"import",
+          category:chosen,applyToSimilar:false,rememberRule:false});
+        setSelectedId(null);return "Movimentação adicionada como novo lançamento.";
+      },analysis?.batchCreatedAt);}}],
+    );
+  }
+  function mergeWith(tx:ExistingTransactionMatch){
+    if(!current||busy)return;
+    const rowId=current.id;
+    Alert.alert("Mesclar sem duplicar?",
+      "Associar a movimentação do banco a '"+tx.title+"' ("+money(tx.amountCents)+")?"+
+      "\n\nO título, a categoria, o valor e as observações do Mototrack serão preservados. "+
+      "O comprovante bancário ficará vinculado ao registro original.",
+      [{text:"Cancelar",style:"cancel"},
+       {text:"Mesclar",onPress:()=>{void work(async()=>{
+         await mergeNubankWithExisting(db,rowId,tx.id);
+         setSelectedId(null);return "Mesclado: nenhum novo lançamento financeiro foi criado.";
+       },analysis?.batchCreatedAt);}}],
+    );
+  }
+  function ignoreOne(){
+    if(!current||busy)return;
+    const row=current;
+    Alert.alert("Não importar esta movimentação?",
+      "Ela sairá das pendências, sem criar ou alterar despesas e receitas. "+
+      "A decisão permanecerá registrada no extrato.",
+      [{text:"Cancelar",style:"cancel"},
+      {text:"Não importar",style:"destructive",onPress:()=>{void work(async()=>{
+        await excludeNubankRow(db,row.id,row.status==="duplicate"?"duplicate_rejected":"not_relevant");
+        setSelectedId(null);return "Movimentação descartada da revisão.";
+      },analysis?.batchCreatedAt);}}],
+    );
+  }
+  function excludeWithReason(reason:SkipReason,label:string){
+    if(!current||busy)return;
+    const id=current.id;
+    Alert.alert("Não contabilizar",label+"\n\nEsta movimentação não será somada às receitas ou despesas.",
+      [{text:"Voltar",style:"cancel"},
+      {text:"Confirmar",onPress:()=>{void work(async()=>{
+        await excludeNubankRow(db,id,reason);
+        setSelectedId(null);return "Movimentação não contabilizada: "+label;
+      },analysis?.batchCreatedAt);}}],
     );
   }
 
-  async function cancelBatch(createdAt: number) {
-    if (busy) return;
-    setBusy(true);
-    try {
-      const recovery = await saveCancellationRecoveryBackup(db);
-      const result = await cancelNubankPendingBatch(db, createdAt);
-      setCursor(0);
-      await load(0);
-      setNotice(result.cancelled + " pendência(s) descartada(s). " +
-        result.preservedReviewed + " movimentação(ões) previamente revisada(s) preservada(s). " +
-        "Cópia de recuperação: " + recovery);
-      if (expandedHistoryBatch === createdAt) {
-        setBatchEvents(await getNubankBatchEvents(db, createdAt));
-      }
-      setUndoIds([]);
-    } catch (error) {
-      Alert.alert("Não foi possível cancelar o extrato", message(error));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function showBatchEvents(createdAt: number) {
-    if (expandedHistoryBatch === createdAt) {
-      setExpandedHistoryBatch(null);
-      setBatchEvents([]);
-      return;
-    }
-    try {
-      const events = await getNubankBatchEvents(db, createdAt);
-      setExpandedHistoryBatch(createdAt);
-      setBatchEvents(events);
-    } catch (error) {
-      Alert.alert("Não foi possível consultar o histórico", message(error));
-    }
-  }
-
-  function confirmReverseBatch(batch: ImportBatchSummary) {
-    if (busy) return;
-    void previewNubankBatchReversal(db, batch.createdAt).then((preview) => {
-      const total = preview.eligible.length + preview.blocked.length + preview.alreadyInactive;
-      if (preview.eligible.length === 0) {
-        Alert.alert(
-          "Nada a reverter",
-          "Este extrato possui " + total + " aprovação(ões) vinculada(s), mas nenhuma é " +
-          "elegível para reversão automática. " + preview.blocked.length +
-          " exigem revisão; " + preview.alreadyInactive + " já estão inativas.",
-        );
-        return;
-      }
-      const details =
-        "Reverter " + preview.eligible.length + " lançamento(s) criados por este extrato?\n\n" +
-        "Receitas a retirar: " + money(preview.incomeCents) +
-        "\nDespesas a retirar: " + money(preview.expenseCents) +
-        "\n\n" + preview.blocked.length + " alterado(s)/bloqueado(s), preservados." +
-        "\n" + preview.alreadyInactive + " já inativo(s)." +
-        "\n\nNenhum registro manual será alterado. Uma cópia local será gravada antes.";
-      Alert.alert("Conferir reversão", details, [
-        { text: "Não reverter", style: "cancel" },
-        {
-          text: "Reverter " + preview.eligible.length,
-          style: "destructive",
-          onPress: () => { void executeReversal(preview); },
-        },
-      ]);
-    }).catch((error) => Alert.alert("Não foi possível calcular a prévia", message(error)));
-  }
-
-  async function executeReversal(preview: BatchReversalPreview) {
-    if (busy) return;
-    setBusy(true);
-    try {
-      const recoveryUri = await saveReversalRecoveryBackup(db);
-      const result = await reverseNubankBatch(db, preview);
-      setCursor(0);
-      await load(0);
-      if (expandedHistoryBatch === preview.batchCreatedAt) {
-        setBatchEvents(await getNubankBatchEvents(db, preview.batchCreatedAt));
-      }
-      setNotice(result.reversed + " importação(ões) revertida(s). " +
-        result.blocked + " bloqueada(s) foram preservadas.");
-      Alert.alert(
-        "Reversão concluída",
-        result.reversed + " lançamentos removidos dos totais por exclusão lógica.\n\n" +
-        result.blocked + " bloqueados/alterados não foram mexidos.\n\n" +
-        "Backup de recuperação local:\n" + recoveryUri + "\n" +
-        "Guarde uma cópia fora do aparelho.",
-      );
-    } catch (error) {
-      Alert.alert("Reversão não concluída", message(error));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function confirmClassifyGroup(scope: GroupScope) {
-    if (!item || busy) return;
-    if (!category) {
-      Alert.alert("Escolha uma categoria", "Escolha a categoria antes de classificar o grupo.");
-      return;
-    }
-    void getNubankCategoryGroup(db, item.id, scope).then((group) => {
-      Alert.alert(
-        "Classificar sem importar",
-        "Marcar " + group.count + " movimentações pendentes como " +
-        (categories.find((c) => c.key === category)?.label ?? category) +
-        "?\n\nExemplos: " + group.examples.map((key) => key.split(":").slice(1).join(":")).join(", ") +
-        ".\n\nSomente as movimentações ainda sem categoria serão alteradas. " +
-        "Nenhuma despesa ou receita será criada.",
-        [
-          { text: "Cancelar", style: "cancel" },
-          { text: "Classificar " + group.count, onPress: () => { void classifyGroup(scope, category); } },
-        ],
-      );
-    }).catch((error) => Alert.alert("Grupo indisponível", message(error)));
-  }
-
-  async function classifyGroup(scope: GroupScope, selectedCategory: string) {
-    if (!item || busy) return;
-    setBusy(true);
-    try {
-      const changed = await categorizeNubankPendingGroup(db, item.id, selectedCategory, scope);
-      setNotice(changed + " movimentação(ões) categorizada(s). Nenhuma foi importada.");
-      await load(queue.offset);
-    } catch (error) {
-      Alert.alert("Não foi possível classificar o grupo", message(error));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function chooseFile() {
-    if (busy) return;
-    setBusy(true);
-    try {
-      const rows = await selectNubankAccountCsv();
-      if (!rows) return;
-      const result = await stageNubankImport(db, rows);
-      setNotice(
-        result.created + " novas para revisão, " + result.repeated +
-        " já conhecidas. " + result.pending + " pendentes no total.",
-      );
-      setCursor(0);
-      await load(0);
-    } catch (error) {
-      Alert.alert("Extrato não importado", message(error));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function commit(action: ImportAction) {
-    if (!item || busy) return;
-    setBusy(true);
-    try {
-      const result = await reviewNubankImport(db, {
-        itemId: item.id,
-        action,
-        category: action === "import" ? (category as ExpenseCategory | IncomeCategory | null) : null,
-        applyToSimilar: similar,
-        rememberRule: remember,
-      });
-      setUndoIds(result.rowIds);
-      setNotice(
-        result.reviewed + (result.reviewed === 1 ? " lançamento revisado." : " lançamentos revisados.") +
-        (remember ? " Regra salva para próximas importações." : ""),
-      );
-      const refreshed = await load(queue.offset);
-      // Após remover o registro aprovado da fila, o próximo ocupa seu lugar.
-      setCursor(Math.min(cursor, Math.max(0, refreshed.items.length - 1)));
-    } catch (error) {
-      Alert.alert("Não foi possível revisar", message(error));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function showComparison() {
-    if (!item || compareBusy) return;
-    if (compareOpen) {
-      setCompareOpen(false);
-      return;
-    }
-    setCompareBusy(true);
-    try {
-      const results = await getNubankPossibleDuplicates(db, item.id);
-      setMatches(results);
-      setCompareOpen(true);
-    } catch (error) {
-      Alert.alert("Falha na comparação", message(error));
-    } finally {
-      setCompareBusy(false);
-    }
-  }
-
-  async function changePosition(direction: -1 | 1) {
-    if (!item || busy) return;
-    setBusy(true);
-    try {
-      // Escolher uma categoria não aprova a movimentação. Porém,
-      // a escolha fica disponível quando o usuário voltar a ela.
-      await saveNubankPendingCategory(db, item.id, category);
-      if (direction === 1 && cursor + 1 < queue.items.length) {
-        setCursor(cursor + 1);
-      } else if (direction === -1 && cursor > 0) {
-        setCursor(cursor - 1);
-      } else if (direction === 1 && queue.offset + queue.items.length < queue.pending) {
-        setCursor(0);
-        await load(queue.offset + queue.pageSize);
-      } else if (direction === -1 && queue.offset > 0) {
-        const result = await load(Math.max(0, queue.offset - queue.pageSize));
-        setCursor(Math.max(0, result.items.length - 1));
-      } else if (direction === 1) {
-        setNotice("Última pendência alcançada. Você pode voltar ou fechar a revisão.");
-      }
-    } catch (error) {
-      Alert.alert("Não foi possível guardar a categoria", message(error));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function confirmAction(action: ImportAction) {
-    if (!item || busy) return;
-    if (action === "import" && item.type === "income" && !category) {
-      Alert.alert("Escolha uma categoria", "Entradas precisam ser classificadas como salário, entrega ou receita única.");
-      return;
-    }
-    const groupCount = similar ? item.pendingGroupCount : 1;
-    if (action === "import" && similar && item.similarCount > 0) {
-      Alert.alert(
-        "Revise as duplicatas",
-        "Esta movimentação tem uma coincidência no Mototrack. Desative 'Aplicar às semelhantes' para avaliar cada ocorrência antes de importar.",
-        [{ text: "Ver comparação", onPress: () => { void showComparison(); } }, { text: "OK" }],
-      );
-      return;
-    }
-    const perform = () => {
-      if (action === "import" && item.similarCount > 0) {
-        Alert.alert(
-          "Possível duplicata",
-          "Há " + item.similarCount + " lançamento(s) com a mesma data, valor e tipo. " +
-          "Confira a comparação antes de criar mais um lançamento.",
-          [
-            { text: "Comparar registros", onPress: () => { void showComparison(); } },
-            { text: "Cancelar", style: "cancel" },
-            { text: "Importar mesmo assim", onPress: () => { void commit(action); } },
-          ],
-        );
-        return;
-      }
-      void commit(action);
-    };
-    if (groupCount > 1) {
-      Alert.alert(
-        "Confirmar decisão em lote",
-        "Essa ação afetará " + groupCount + " movimentações pendentes do mesmo estabelecimento/destinatário. " +
-        (remember ? "Também salvará uma regra de sugestão para o futuro." : "As regras futuras não serão alteradas."),
-        [
-          { text: "Cancelar", style: "cancel" },
-          { text: "Confirmar " + groupCount, onPress: perform },
-        ],
-      );
-      return;
-    }
-    perform();
-  }
-
-  async function undo() {
-    if (!undoIds.length || busy) return;
-    setBusy(true);
-    try {
-      await undoNubankImport(db, undoIds);
-      setNotice("Última revisão desfeita. Regras salvas permanecem ativas.");
-      setUndoIds([]);
-      setCursor(0);
-      await load(0);
-    } catch (error) {
-      Alert.alert("Não foi possível desfazer", message(error));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const categories = item?.type === "income"
-    ? IncomeCategoryOptions : ExpenseCategoryOptions;
-  const actionHint = item?.ruleAction
-    ? "Regra sua já salva — revise antes de confirmar."
-    : item?.suggestedAction || item?.suggestedCategory
-      ? "Sugestão automática — você decide se aceita."
-      : "Sem sugestão: aguarda sua decisão.";
+  const visible=(analysis?.items??[]).filter(x=>
+    filter==="all"||(filter==="ready"?x.status==="ready":x.status!=="ready"));
+  const picked=batches.find(b=>b.createdAt===batchId);
+  const opts=current?.type==="income"?IncomeCategoryOptions:ExpenseCategoryOptions;
 
   return (
     <SafeAreaView style={styles.page}>
       <View style={styles.header}>
-        <Text style={styles.heading}>Extrato Nubank</Text>
-        <Pressable onPress={() => router.back()} style={styles.close} disabled={busy}>
-          <Text style={styles.muted}>Fechar</Text>
-        </Pressable>
-      </View>
-      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-        <Text style={styles.description}>
-          Importe o CSV da conta. As movimentações ficam separadas dos lançamentos
-          do Mototrack até você aprová-las. Nenhum arquivo é enviado a um servidor.
-        </Text>
-        <Pressable style={[styles.primary, busy && styles.disabled]} onPress={() => void chooseFile()} disabled={busy}>
-          <Text style={styles.primaryText}>
-            {busy ? "Processando…" : "Selecionar extrato CSV"}
-          </Text>
-        </Pressable>
-        {busy ? <ActivityIndicator color="#FFB35A" style={styles.spinner} /> : null}
-        {notice ? <Text style={styles.notice}>{notice}</Text> : null}
-        {batches.length > 0 ? (
-          <View style={styles.batchPanel}>
-            <Pressable
-              style={styles.row}
-              onPress={() => setShowBatches((value) => !value)}
-            >
-              <Text style={styles.sectionTitle}>Histórico de extratos ({batches.length})</Text>
-              <Text style={styles.compareText}>{showBatches ? "Ocultar" : "Gerenciar"}</Text>
-            </Pressable>
-            {showBatches ? batches.map((batch) => (
-              <View key={batch.createdAt} style={styles.batchItem}>
-                <Text style={styles.compareTitle}>
-                  {dateBr(batch.firstDate)} — {dateBr(batch.lastDate)}
-                </Text>
-                <Text style={styles.muted}>
-                  Importado em {new Date(batch.createdAt).toLocaleString("pt-BR")}
-                </Text>
-                <Text style={styles.muted}>
-                  {batch.pending} pendente(s) · {batch.imported} aprovada(s) ativa(s) ·
-                  {" "}{batch.ignored} ignorada(s) · {batch.transfers} transferência(s)
-                </Text>
-                <Text style={styles.muted}>
-                  {batch.reverted} inativa(s) · {batch.cancelled} pendência(s) cancelada(s)
-                </Text>
-                {batch.pending > 0 ? (
-                  <Pressable
-                    style={styles.cancelBatchButton}
-                    disabled={busy}
-                    onPress={() => confirmCancelBatch(batch)}
-                  >
-                    <Text style={styles.warning}>Descartar pendências deste extrato</Text>
-                  </Pressable>
-                ) : null}
-                {batch.imported > 0 ? (
-                  <Pressable
-                    style={styles.cancelBatchButton}
-                    disabled={busy}
-                    onPress={() => confirmReverseBatch(batch)}
-                  >
-                    <Text style={styles.warning}>Verificar reversão das aprovações</Text>
-                  </Pressable>
-                ) : null}
-                <Pressable
-                  style={styles.compareButton}
-                  disabled={busy}
-                  onPress={() => { void showBatchEvents(batch.createdAt); }}
-                >
-                  <Text style={styles.compareText}>
-                    {expandedHistoryBatch === batch.createdAt ? "Ocultar ações anteriores" : "Consultar ações anteriores"}
-                  </Text>
-                </Pressable>
-                {expandedHistoryBatch === batch.createdAt ? (
-                  <View style={styles.compareSection}>
-                    {batchEvents.length ? batchEvents.map((event) => (
-                      <Text style={styles.muted} key={event.id}>
-                        {new Date(event.occurredAt).toLocaleString("pt-BR")} ·
-                        {" "}{event.action === "pending_cancelled" ? "Pendências descartadas" : "Aprovações revertidas"}:
-                        {" "}{event.affectedCount}
-                      </Text>
-                    )) : (
-                      <Text style={styles.muted}>Nenhum cancelamento ou reversão anterior registrado.</Text>
-                    )}
-                  </View>
-                ) : null}
-              </View>
-            )) : null}
-          </View>
-        ) : null}
-
-        <View style={styles.summary}>
-          <Text style={styles.summaryCount}>{queue.pending}</Text>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.summaryTitle}>Aguardando revisão</Text>
-            <Text style={styles.muted}>Decisões adiadas continuam salvas no aparelho.</Text>
-          </View>
+        <View style={{flex:1,gap:3}}>
+          <Text style={styles.heading}>Extratos bancários</Text>
+          <Text style={styles.muted}>Analise, concilie e confirme apenas o necessário</Text>
         </View>
-        {undoIds.length ? (
-          <Pressable onPress={() => void undo()} disabled={busy} style={styles.undo}>
-            <Text style={styles.undoText}>Desfazer última decisão ({undoIds.length})</Text>
-          </Pressable>
-        ) : null}
+        <Pressable onPress={()=>router.back()} disabled={busy}><Text style={styles.link}>Fechar</Text></Pressable>
+      </View>
+      <ScrollView contentContainerStyle={styles.body}>
+        <Pressable style={[styles.primary,busy&&styles.disabled]}
+          onPress={()=>{void chooseFile();}} disabled={busy}>
+          <Text style={styles.primaryText}>+ Selecionar extrato Nubank (CSV)</Text>
+        </Pressable>
+        {busy?<ActivityIndicator color="#FFB35A"/>:null}
+        {notice?<Text style={styles.notice}>{notice}</Text>:null}
 
-        {!item ? (
-          <View style={styles.empty}>
-            <Text style={styles.summaryTitle}>Nenhuma movimentação pendente</Text>
-            <Text style={styles.muted}>
-              Selecione um extrato. Importar o mesmo arquivo novamente não duplica seus registros.
-            </Text>
-          </View>
-        ) : (
-          <View style={styles.review}>
-            <View style={styles.row}>
-              <Text style={styles.sectionTitle}>Revisar movimentação</Text>
-              <Text style={styles.muted}>{queue.offset + cursor + 1} de {queue.pending} pendentes</Text>
-            </View>
-            <View style={styles.item}>
-              <Text style={styles.muted}>{dateBr(item.dateISO)} · {item.type === "income" ? "Entrada" : "Saída"}</Text>
-              <Text style={[styles.amount, item.type === "income" && styles.income]}>
-                {item.type === "income" ? "+ " : "− "}{money(item.amountCents)}
-              </Text>
-              <Text style={styles.title}>{item.description}</Text>
-              <Text style={styles.hint}>{actionHint}</Text>
-              {learned ? (
-                <View style={styles.learnPanel}>
-                  <Text style={styles.compareSource}>APRENDIDO COM SEUS LANÇAMENTOS</Text>
-                  <Text style={styles.muted}>
-                    {learned.exampleTitle} → {categories.find(c => c.key === learned.category)?.label ?? learned.category}
-                    {" · "}{learned.count} ocorrência(s) anterior(es)
-                  </Text>
-                  <Pressable
-                    onPress={() => setCategory(learned.category)}
-                    style={styles.compareButton}
-                    disabled={busy}
-                  >
-                    <Text style={styles.compareText}>Usar categoria aprendida</Text>
-                  </Pressable>
-                </View>
-              ) : null}
-              {item.ruleAction || item.suggestedAction ? (
-                <Text style={styles.hint}>
-                  Ação sugerida: {suggestedAction === "transfer" ? "Transferência"
-                    : suggestedAction === "ignore" ? "Ignorar" : "Importar"}.
-                  A aprovação continua sendo manual.
-                </Text>
-              ) : null}
-              {item.similarCount > 0 ? (
-                <>
-                  <Text style={styles.warning}>
-                    {item.similarCount} possível(is) duplicata(s) no Mototrack — mesma data, tipo e valor.
-                  </Text>
-                  <Pressable style={styles.compareButton} onPress={() => void showComparison()} disabled={compareBusy}>
-                    <Text style={styles.compareText}>
-                      {compareBusy ? "Procurando…" : compareOpen ? "Ocultar comparação" : "Comparar com o Mototrack"}
-                    </Text>
-                  </Pressable>
-                  {compareOpen ? (
-                    <View style={styles.compareSection}>
-                      <View style={styles.compareCard}>
-                        <Text style={styles.compareSource}>EXTRATO NUBANK · A IMPORTAR</Text>
-                        <Text style={styles.compareTitle}>{item.description}</Text>
-                        <Text style={styles.muted}>{dateBr(item.dateISO)} · {money(item.amountCents)}</Text>
-                        <Text style={styles.muted}>Categoria atual: {category ?? "Sem categoria"}</Text>
-                      </View>
-                      {matches.map((existing) => (
-                        <View key={existing.id} style={styles.compareCard}>
-                          <Text style={styles.compareSource}>
-                            MOTOTRACK · REGISTRO EXISTENTE #{existing.id}
-                          </Text>
-                          <Text style={styles.compareTitle}>{existing.title}</Text>
-                          <Text style={styles.muted}>
-                            {dateBr(existing.dateISO)} · {money(existing.amountCents)}
-                          </Text>
-                          <Text style={styles.muted}>
-                            Categoria: {existing.category ?? "Sem categoria"}
-                            {existing.distanceMeters === null ? "" :
-                              " · " + (existing.distanceMeters / 1000).toFixed(1) + " km"}
-                          </Text>
-                        </View>
-                      ))}
-                      <Text style={styles.muted}>
-                        Coincidência não é certeza de duplicação. Você pode ignorar o novo, importar mesmo assim ou adiar.
-                      </Text>
-                    </View>
-                  ) : null}
-                </>
-              ) : null}
-              {item.merchantKey === "CARD_BILL" ? (
-                <Text style={styles.warning}>
-                  Pagamento da fatura: não conte duas vezes se também importar as compras do cartão.
-                  Marcar como transferência só faz sentido quando os gastos estão registrados separadamente.
-                </Text>
-              ) : null}
-            </View>
-
-            <Text style={styles.sectionTitle}>
-              {item.type === "income" ? "Categoria da entrada" : "Categoria da movimentação (opcional)"}
-            </Text>
-            <View style={styles.chips}>
-              {item.type === "expense" ? (
-                <Pressable onPress={() => setCategory(null)} style={[styles.chip, category === null && styles.active]}>
-                  <Text style={styles.chipText}>Sem categoria</Text>
-                </Pressable>
-              ) : null}
-              {categories.map((entry) => (
-                <Pressable
-                  key={entry.key}
-                  onPress={() => setCategory(entry.key)}
-                  style={[styles.chip, category === entry.key && styles.active]}
-                >
-                  <Text style={styles.chipText}>{entry.label}</Text>
+        {batches.length>0?(
+          <View style={styles.block}>
+            <Text style={styles.section}>Extrato selecionado</Text>
+            <View style={styles.wrap}>
+              {batches.map(b=>(
+                <Pressable key={b.createdAt}
+                  style={[styles.chip,batchId===b.createdAt&&styles.active]}
+                  onPress={()=>{setBatchId(b.createdAt);setSelectedId(null);setFilter("exceptions");
+                    void reload(b.createdAt).catch(e=>Alert.alert("Erro",errorText(e)));}}>
+                  <Text style={styles.chipText}>{dateBr(b.firstDate)} – {dateBr(b.lastDate)}</Text>
                 </Pressable>
               ))}
             </View>
+            {picked?<Text style={styles.muted}>{picked.pending} pendentes · {picked.imported} aprovados · {picked.merged} mesclados</Text>:null}
+          </View>
+        ):null}
 
-            {((exactGroup && exactGroup.count > 1) || (brandGroup && brandGroup.count > 1)) ? (
-              <View style={styles.learnPanel}>
-                <Text style={styles.sectionTitle}>Classificar em lote, sem importar</Text>
-                <Text style={styles.muted}>
-                  Você pode categorizar várias compras de uma vez, sem aprová-las.
-                  As classificações já preenchidas serão preservadas.
-                </Text>
-                {exactGroup && exactGroup.count > 1 ? (
-                  <Pressable
-                    style={styles.compareButton}
-                    disabled={busy}
-                    onPress={() => confirmClassifyGroup("exact")}
-                  >
-                    <Text style={styles.compareText}>
-                      Classificar {exactGroup.count} descrições idênticas
-                    </Text>
-                  </Pressable>
-                ) : null}
-                {brandGroup && brandGroup.count > (exactGroup?.count ?? 0) ? (
-                  <Pressable
-                    style={styles.compareButton}
-                    disabled={busy}
-                    onPress={() => confirmClassifyGroup("brand")}
-                  >
-                    <Text style={styles.compareText}>
-                      Classificar {brandGroup.count} variações de {brandGroup.label}
-                    </Text>
-                  </Pressable>
-                ) : null}
+        {analysis?(
+          <View style={styles.block}>
+            <Text style={styles.section}>Análise do extrato</Text>
+            <View style={styles.metrics}>
+              {([
+                ["Prontas",analysis.ready,"#91DFBE"],
+                ["Possíveis duplicatas",analysis.duplicate,"#FFCF91"],
+                ["Sem categoria",analysis.category,"#D5C5FF"],
+                ["Não contabilizar?",analysis.nonAccounting,"#B1B4CC"],
+              ] as const).map(([label,num,color])=>(
+                <View key={label} style={styles.metric}>
+                  <Text style={[styles.metricNumber,{color}]}>{num}</Text>
+                  <Text style={styles.metricLabel}>{label}</Text>
+                </View>
+              ))}
+            </View>
+            {analysis.ready>0?(
+              <View style={styles.readyPanel}>
+                <Text style={styles.compareTitle}>{analysis.ready} lançamento(s) pronto(s)</Text>
+                <Text style={styles.muted}>Entradas: {money(analysis.incomeCents)} · Saídas: {money(analysis.expenseCents)}</Text>
+                <Text style={styles.muted}>Categorizações sugeridas; nenhuma coincidência exata detectada. Confirme antes de criar lançamentos.</Text>
+                <Pressable style={styles.primary} disabled={busy} onPress={approveReady}>
+                  <Text style={styles.primaryText}>Importar {analysis.ready} lançamentos prontos</Text>
+                </Pressable>
               </View>
-            ) : null}
-            <View style={styles.switchRow}>
-              <View style={styles.switchLabel}>
-                <Text style={styles.switchTitle}>Aplicar esta decisão às descrições idênticas</Text>
-                <Text style={styles.muted}>
-                  {item.pendingGroupCount} pendente(s) do mesmo estabelecimento/destinatário e direção.
-                </Text>
-              </View>
-              <Switch value={similar} onValueChange={setSimilar} disabled={busy} trackColor={{ true: "#DFA353" }} />
-            </View>
-            <View style={styles.switchRow}>
-              <View style={styles.switchLabel}>
-                <Text style={styles.switchTitle}>Lembrar minha decisão</Text>
-                <Text style={styles.muted}>Sugere a mesma ação em futuros CSVs; nunca aprova sem você.</Text>
-              </View>
-              <Switch value={remember} onValueChange={setRemember} disabled={busy} trackColor={{ true: "#DFA353" }} />
-            </View>
-
-            <Pressable
-              style={[styles.primary, busy && styles.disabled]}
-              disabled={busy}
-              onPress={() => confirmAction("import")}
-            >
-              <Text style={styles.primaryText}>Confirmar importação no Mototrack</Text>
-            </Pressable>
-            <View style={styles.twoButtons}>
-              <Pressable style={styles.secondary} disabled={busy} onPress={() => confirmAction("transfer")}>
-                <Text style={styles.secondaryText}>Marcar transferência</Text>
-              </Pressable>
-              <Pressable style={styles.secondary} disabled={busy} onPress={() => confirmAction("ignore")}>
-                <Text style={styles.secondaryText}>Ignorar</Text>
-              </Pressable>
-            </View>
-            <View style={styles.twoButtons}>
-              <Pressable
-                style={styles.outline}
-                disabled={busy}
-                onPress={() => { void changePosition(-1); }}
-              >
-                <Text style={styles.outlineText}>Anterior</Text>
-              </Pressable>
-              <Pressable
-                style={styles.outline}
-                disabled={busy}
-                onPress={() => { void changePosition(1); }}
-              >
-                <Text style={styles.outlineText}>Salvar e próxima</Text>
-              </Pressable>
-            </View>
+            ):<Text style={styles.muted}>Nenhum lançamento está pronto. Resolva os grupos abaixo.</Text>}
+          </View>
+        ):(
+          <View style={styles.block}>
+            <Text style={styles.muted}>Selecione um CSV para começar. Lançamentos não entram no Mototrack sem confirmação.</Text>
           </View>
         )}
-        <Text style={styles.muted}>
-          As escolhas de categoria são salvas ao navegar, mas não importadas sem confirmação.
-          {queue.pending > 0 ? " A lista tem " + queue.pending + " pendências ao todo." : ""}
-        </Text>
-        <Text style={styles.disclaimer}>
-          Recomendações não são certezas. Pix entre contas próprias, estornos, pagamentos
-          de fatura e reembolsos exigem cuidado para não distorcer receitas ou gastos.
-          O suporte a CSV de fatura será desenvolvido separadamente.
+
+        {analysis&&analysis.count>0?(
+          <View style={styles.block}>
+            <Text style={styles.section}>Revisar movimentações</Text>
+            <View style={styles.wrap}>
+              {([["exceptions","Exceções"],["ready","Prontas"],["all","Todas"]] as const).map(([k,v])=>(
+                <Pressable key={k} style={[styles.chip,filter===k&&styles.active]}
+                  onPress={()=>{setFilter(k);setVisibleLimit(20);setSelectedId(null);}}>
+                  <Text style={styles.chipText}>{v}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <Text style={styles.muted}>{visible.length} movimentações neste filtro.</Text>
+            {visible.slice(0,visibleLimit).map(row=>(
+              <View key={row.id}>
+                <Pressable onPress={()=>chooseItem(row)}
+                  style={[styles.item,row.id===selectedId&&styles.selected]}>
+                  <View style={{flex:1,gap:4}}>
+                    <Text style={styles.compareTitle}>{row.description}</Text>
+                    <Text style={styles.muted}>{dateBr(row.dateISO)} · {row.category??
+                      (row.status==="duplicate"?"Conferir duplicata":"Sem categoria")}</Text>
+                    <Text style={styles.hint}>{row.status==="ready"?"Pronta para importar":
+                      row.status==="duplicate"?"Possível duplicata":
+                      row.status==="category"?"Classificação pendente":"Não contabilizar?"}</Text>
+                  </View>
+                  <Text style={styles.value}>{row.type==="income"?"+":"−"}{money(row.amountCents)}</Text>
+                </Pressable>
+                {row.id===selectedId?(
+                  <View style={styles.detail}>
+                    <Text style={styles.section}>Resolver movimentação</Text>
+                    {row.status==="duplicate"?(
+                      <>
+                        <Text style={styles.muted}>
+                          {row.existingCount} lançamento(s) com a mesma data, tipo e valor. Compare e decida.
+                        </Text>
+                        {matches.map(tx=>(
+                          <View key={tx.id} style={styles.compare}>
+                            <Text style={styles.compareTitle}>No Mototrack: {tx.title}</Text>
+                            <Text style={styles.muted}>{dateBr(tx.dateISO)} · {money(tx.amountCents)} · Categoria: {tx.category??"Nenhuma"}</Text>
+                            <Pressable style={styles.action} disabled={busy} onPress={()=>mergeWith(tx)}>
+                              <Text style={styles.actionText}>Mesclar com este · sem nova despesa</Text>
+                            </Pressable>
+                          </View>
+                        ))}
+                      </>
+                    ):null}
+                    {row.status==="non_accounting"?(
+                      <>
+                        <Text style={styles.muted}>
+                          Nem todo Pix é transferência entre contas próprias. Escolha o motivo, se for o caso.
+                        </Text>
+                        {([
+                          ["own_transfer","Entre minhas próprias contas"],
+                          ["already_recorded_card_payment","Fatura já contabilizada"],
+                          ["other_non_accounting","Outro movimento sem impacto financeiro"],
+                        ] as const).map(([reason,label])=>(
+                          <Pressable key={reason} style={styles.action} disabled={busy}
+                            onPress={()=>excludeWithReason(reason,label)}>
+                            <Text style={styles.actionText}>{label}</Text>
+                          </Pressable>
+                        ))}
+                      </>
+                    ):null}
+                    <Text style={styles.muted}>Categoria</Text>
+                    <View style={styles.wrap}>
+                      {opts.map(o=>(
+                        <Pressable key={o.key} style={[styles.chip,category===o.key&&styles.active]}
+                          onPress={()=>setCategory(o.key)}>
+                          <Text style={styles.chipText}>{o.label}</Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                    <View style={styles.buttons}>
+                      <Pressable style={styles.action} disabled={busy||!category}
+                        onPress={categorizeOne}>
+                        <Text style={styles.actionText}>Guardar categoria</Text>
+                      </Pressable>
+                      <Pressable style={styles.action} disabled={busy||!category}
+                        onPress={()=>categorizeGroup("exact")}>
+                        <Text style={styles.actionText}>Classificar semelhantes</Text>
+                      </Pressable>
+                    </View>
+                    {row.merchantKey.startsWith("DEBIT:")?(
+                      <Pressable style={styles.action} disabled={busy||!category}
+                        onPress={()=>categorizeGroup("brand")}>
+                        <Text style={styles.actionText}>Classificar variações do estabelecimento</Text>
+                      </Pressable>
+                    ):null}
+                    <Pressable style={styles.primary} disabled={busy||!category} onPress={addIndividual}>
+                      <Text style={styles.primaryText}>
+                        {row.status==="duplicate"?"Adicionar como lançamento separado":"Importar apenas este lançamento"}
+                      </Text>
+                    </Pressable>
+                    <Pressable style={styles.action} disabled={busy} onPress={ignoreOne}>
+                      <Text style={styles.warning}>🗑  Não importar esta movimentação</Text>
+                    </Pressable>
+                  </View>
+                ):null}
+              </View>
+            ))}
+            {visible.length>visibleLimit?(
+              <Pressable style={styles.action} onPress={()=>setVisibleLimit(n=>n+30)}>
+                <Text style={styles.actionText}>Mostrar mais {Math.min(30,visible.length-visibleLimit)} movimentações</Text>
+              </Pressable>
+            ):null}
+          </View>
+        ):null}
+
+        {batches.length>0?(
+          <View style={styles.block}>
+            <Pressable style={styles.row} onPress={()=>setShowHistory(x=>!x)}>
+              <Text style={styles.section}>Histórico e recuperação</Text>
+              <Text style={styles.link}>{showHistory?"Ocultar":"Abrir"}</Text>
+            </Pressable>
+            {showHistory?batches.map(batch=>(
+              <View key={batch.createdAt} style={styles.history}>
+                <Text style={styles.compareTitle}>{dateBr(batch.firstDate)} – {dateBr(batch.lastDate)}</Text>
+                <Text style={styles.muted}>
+                  {batch.pending} pendentes · {batch.imported} ativos · {batch.merged} mesclados · {batch.reverted} inativos · {batch.cancelled} cancelados
+                </Text>
+                {batch.pending>0?(
+                  <Pressable style={styles.action} onPress={()=>abandon(batch)} disabled={busy}>
+                    <Text style={styles.warning}>Descartar pendências deste extrato</Text>
+                  </Pressable>
+                ):null}
+                {batch.imported>0?(
+                  <Pressable style={styles.action} onPress={()=>revert(batch)} disabled={busy}>
+                    <Text style={styles.warning}>Verificar reversão das aprovações</Text>
+                  </Pressable>
+                ):null}
+                <Pressable style={styles.action} onPress={()=>{void viewEvents(batch.createdAt);}}>
+                  <Text style={styles.actionText}>{eventBatch===batch.createdAt?"Ocultar eventos":"Consultar eventos anteriores"}</Text>
+                </Pressable>
+                {eventBatch===batch.createdAt?(
+                  events.length?events.map(event=>(
+                    <Text key={event.id} style={styles.muted}>
+                      {new Date(event.occurredAt).toLocaleString("pt-BR")} ·
+                      {" "}{event.action==="pending_cancelled"?"Pendências canceladas":"Aprovações revertidas"}: {event.affectedCount}
+                    </Text>
+                  )):<Text style={styles.muted}>Nenhum evento de cancelamento ou reversão.</Text>
+                ):null}
+              </View>
+            )):null}
+          </View>
+        ):null}
+        <Text style={styles.footer}>
+          A análise é uma sugestão, não uma garantia de ausência de duplicatas.
+          Mesclar mantém a transação original; não contabilizar não cria receita nem despesa.
+          Faça backup externo antes de restaurar versões antigas.
         </Text>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  page: { flex: 1, backgroundColor: "#101025" },
-  header: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 12,
-    flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  heading: { color: "#FFF", fontSize: 21, fontWeight: "800" },
-  close: { padding: 8 },
-  content: { paddingHorizontal: 20, paddingBottom: 52, gap: 13 },
-  description: { color: "#BCBBCD", fontSize: 13, lineHeight: 20 },
-  primary: { backgroundColor: "#FFB35A", borderRadius: 12, padding: 14, alignItems: "center" },
-  primaryText: { color: "#171224", fontWeight: "800", fontSize: 14 },
-  spinner: { marginVertical: 6 },
-  disabled: { opacity: 0.5 },
-  notice: { color: "#C8E2CC", fontSize: 13, lineHeight: 19 },
-  summary: { flexDirection: "row", gap: 12, padding: 14,
-    borderRadius: 12, backgroundColor: "#24243A", alignItems: "center" },
-  summaryCount: { color: "#FFB35A", fontSize: 32, fontWeight: "800" },
-  summaryTitle: { color: "#FFF", fontSize: 15, fontWeight: "700" },
-  muted: { color: "#A9A8BA", fontSize: 12, lineHeight: 18 },
-  undo: { padding: 10, alignItems: "center", borderWidth: 1,
-    borderColor: "#FFB35A", borderRadius: 10 },
-  undoText: { color: "#FFB35A", fontWeight: "600", fontSize: 13 },
-  empty: { padding: 20, backgroundColor: "#212135", borderRadius: 12, gap: 8 },
-  review: { gap: 13, marginTop: 8 },
-  row: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  sectionTitle: { color: "#FFF", fontSize: 14, fontWeight: "700" },
-  item: { padding: 16, backgroundColor: "#24243A", borderRadius: 14, gap: 9 },
-  amount: { color: "#FFB6AD", fontSize: 25, fontWeight: "800" },
-  income: { color: "#8EDBBB" },
-  title: { color: "#FFF", fontSize: 15, fontWeight: "600" },
-  hint: { color: "#BDB5E6", fontSize: 12 },
-  warning: { color: "#FFCF91", fontSize: 12, lineHeight: 19 },
-  compareButton: { paddingVertical: 10, paddingHorizontal: 12, backgroundColor: "#38334C", borderRadius: 10, alignSelf: "flex-start" },
-  compareText: { color: "#FFCF91", fontSize: 13, fontWeight: "700" },
-  compareSection: { gap: 8, marginTop: 4 },
-  batchPanel: { gap: 10, borderWidth: 1, borderColor: "#48425D",
-    backgroundColor: "#211F37", borderRadius: 12, padding: 12 },
-  batchItem: { borderTopWidth: 1, borderColor: "#49435B", gap: 5, paddingVertical: 10 },
-  cancelBatchButton: { borderWidth: 1, borderColor: "#9C6170",
-    borderRadius: 10, padding: 9, alignSelf: "flex-start" },
-  learnPanel: { gap: 10, padding: 12, backgroundColor: "#26233C", borderRadius: 12 },
-  compareCard: { borderWidth: 1, borderColor: "#514A65", backgroundColor: "#1E1D30", borderRadius: 10, padding: 12, gap: 5 },
-  compareSource: { color: "#FFCF91", fontSize: 11, fontWeight: "800" },
-  compareTitle: { color: "#FFF", fontSize: 14, fontWeight: "600" },
-  chips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  chip: { paddingHorizontal: 12, paddingVertical: 9, borderRadius: 20,
-    borderColor: "#48465F", borderWidth: 1 },
-  active: { borderColor: "#FFB35A", backgroundColor: "#503E42" },
-  chipText: { color: "#FFF", fontSize: 12 },
-  switchRow: { flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 3 },
-  switchLabel: { flex: 1, gap: 3 },
-  switchTitle: { color: "#FFF", fontSize: 13, fontWeight: "600" },
-  twoButtons: { flexDirection: "row", gap: 10 },
-  secondary: { flex: 1, padding: 12, borderRadius: 11, alignItems: "center",
-    backgroundColor: "#353047" },
-  secondaryText: { color: "#FFF", fontSize: 13, fontWeight: "700" },
-  outline: { flex: 1, padding: 10, borderRadius: 10, alignItems: "center",
-    borderWidth: 1, borderColor: "#5D5670" },
-  outlineText: { color: "#DBD2E4", fontSize: 13 },
-  disclaimer: { color: "#8E90A2", fontSize: 11, lineHeight: 18, marginTop: 10 },
+const styles=StyleSheet.create({
+  page:{flex:1,backgroundColor:"#101025"},
+  header:{flexDirection:"row",justifyContent:"space-between",alignItems:"center",padding:20,gap:12},
+  heading:{color:"#FFFFFF",fontSize:21,fontWeight:"800"},
+  body:{paddingHorizontal:18,paddingBottom:60,gap:14},
+  block:{backgroundColor:"#222238",padding:15,borderRadius:14,gap:12},
+  section:{color:"#FFFFFF",fontSize:16,fontWeight:"800"},
+  muted:{color:"#BAB7CD",fontSize:12,lineHeight:19},
+  link:{color:"#FFCE91",fontSize:13,fontWeight:"700"},
+  notice:{backgroundColor:"#284035",color:"#DEFCE9",borderRadius:9,padding:12,fontSize:12},
+  primary:{backgroundColor:"#FFB35A",padding:14,borderRadius:11,alignItems:"center"},
+  primaryText:{color:"#1B1A25",fontWeight:"800",fontSize:14},
+  disabled:{opacity:0.5},
+  row:{flexDirection:"row",justifyContent:"space-between",alignItems:"center"},
+  wrap:{flexDirection:"row",flexWrap:"wrap",gap:7},
+  chip:{borderWidth:1,borderColor:"#54506B",paddingHorizontal:11,paddingVertical:9,borderRadius:19},
+  active:{backgroundColor:"#564451",borderColor:"#FFB35A"},
+  chipText:{color:"#FFF",fontSize:12,fontWeight:"600"},
+  metrics:{flexDirection:"row",flexWrap:"wrap",gap:8},
+  metric:{backgroundColor:"#15152D",borderRadius:12,padding:12,width:"48%",minHeight:90},
+  metricNumber:{fontSize:27,fontWeight:"800"},
+  metricLabel:{color:"#D3CEDD",fontSize:12,lineHeight:18},
+  readyPanel:{padding:13,backgroundColor:"#2C3442",borderRadius:12,gap:10},
+  compareTitle:{color:"#FFFFFF",fontSize:14,fontWeight:"700",flexShrink:1},
+  item:{backgroundColor:"#2B2A44",borderRadius:11,padding:13,flexDirection:"row",justifyContent:"space-between",gap:10,marginTop:6},
+  selected:{borderWidth:1,borderColor:"#FFB35A"},
+  hint:{color:"#E7C497",fontSize:11},
+  value:{color:"#FFF",fontWeight:"700",fontSize:14},
+  detail:{padding:13,gap:12,borderWidth:1,borderColor:"#514F72",borderRadius:12,backgroundColor:"#1B1B33"},
+  compare:{padding:12,backgroundColor:"#34304C",borderRadius:10,gap:7},
+  buttons:{flexDirection:"row",gap:8},
+  action:{backgroundColor:"#37344D",padding:11,borderRadius:10,flex:1},
+  actionText:{color:"#FFE0B2",fontSize:12,fontWeight:"700",textAlign:"center"},
+  warning:{color:"#FFCF91",fontSize:12,fontWeight:"700",textAlign:"center"},
+  history:{borderTopWidth:1,borderColor:"#49455C",paddingTop:12,gap:8},
+  footer:{color:"#A7A4B8",fontSize:11,lineHeight:17},
 });
