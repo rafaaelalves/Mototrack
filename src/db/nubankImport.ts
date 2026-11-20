@@ -10,6 +10,7 @@ import {
   reviewBankItemCore, stageNubankRowsCore, undoBankReviewCore,
   analyzeSmartBatchCore, createReadyPreview, approveReadyBatchCore,
   mergeExistingBankRowCore, skipBankRowCore, rememberCategoryGroupCore,
+  listMergedBankRowsCore, unmergeBankRowCore,
   type GroupScope, type ReviewDecision, type SmartReadyPreview, type SkipReason,
 } from "./nubankImportCore";
 import {
@@ -151,4 +152,11 @@ export function rememberNubankCategoryGroup(
   scope: GroupScope,
 ) {
   return atomic(db, tx => rememberCategoryGroupCore(tx, rowId, category, scope));
+}
+
+export function getNubankMergedRows(db:SQLiteDatabase,createdAt:number){
+  return listMergedBankRowsCore(db,createdAt);
+}
+export function unmergeNubankRow(db:SQLiteDatabase,rowId:number){
+  return atomic(db,tx=>unmergeBankRowCore(tx,rowId));
 }
